@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from db import engine
 from redis_client import client as redis
+from routers.websocket import manager
 from services.monitoring import collect as collect_node1
 from services.normalization import normalize
 from services.simulator import generate as generate_synthetic
@@ -60,6 +61,29 @@ async def _collect_all_nodes() -> None:
         )
 
 
+async def _push_metrics() -> None:
+    if manager.count == 0:
+        return
+
+    for node_id in ("node-1", "node-2", "node-3"):
+        raw = await redis.get(f"metrics:latest:{node_id}")
+        if raw is None:
+            continue
+        m = json.loads(raw)
+        event = {
+            "type": "metric_update",
+            "node_id": m["node_id"],
+            "cpu": m["cpu"],
+            "memory": m["memory"],
+            "disk": m["disk"],
+            "latency_ms": m["latency_ms"],
+            "packet_loss_pct": m["packet_loss_pct"],
+            "status": m["status"],
+            "timestamp": m["timestamp"],
+        }
+        await manager.broadcast(json.dumps(event))
+
+
 async def _cleanup_retention() -> None:
     async with engine.begin() as conn:
         await conn.execute(
@@ -71,6 +95,7 @@ def start_scheduler() -> None:
     global _started
     if not _started:
         scheduler.add_job(_collect_all_nodes, "interval", seconds=5, id="collect_metrics")
+        scheduler.add_job(_push_metrics, "interval", seconds=1, id="push_metrics")
         scheduler.add_job(_cleanup_retention, "interval", hours=1, id="cleanup_retention")
         scheduler.start()
         _started = True

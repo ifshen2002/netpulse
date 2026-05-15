@@ -7,6 +7,7 @@ from db import check_db, close_db
 from redis_client import check_redis, close_redis
 from routers.metrics import router as metrics_router
 from routers.nodes import router as nodes_router
+from routers.websocket import router as websocket_router
 from scheduler import start_scheduler, stop_scheduler
 
 _TESTING = os.environ.get("NETPULSE_TESTING", "").lower() in ("1", "true")
@@ -29,6 +30,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(nodes_router)
 app.include_router(metrics_router)
+app.include_router(websocket_router)
 
 
 @app.get("/api/health")

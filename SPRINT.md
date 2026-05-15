@@ -36,16 +36,16 @@ Phase 8 → CI/CD (pipeline-only, no auto-deploy)
 # 3. Current Status (MUTABLE)
 
 ## Current Phase
-Phase 2 — COMPLETE
+Phase 3 — COMPLETE
 
 ## Current Focus
-Phase 2 exit criteria met. Ready for Phase 3.
+Phase 3 exit criteria met. Ready for Phase 4.
 
 ## Latest Stable Milestone
-Phase 2 Metrics & Nodes: 3 nodes reporting, metrics pipeline running (collect → normalize → DB + Redis), APIs returning data, retention cleanup active, 20 tests passing.
+Phase 3 Realtime Pipeline: WebSocket endpoint live, 1s metric_update push from Redis via ConnectionManager, frontend Vite+React+Zustand scaffold receiving live events, 23 tests passing.
 
 ## Next Action
-Begin Phase 3 — Realtime Pipeline. First step: WebSocket manager for in-memory broadcast.
+Begin Phase 4 — Alerts & Incidents. First step: alert threshold evaluation (cpu_high, latency_spike, heartbeat_timeout).
 
 ## Blockers
 None.
@@ -210,6 +210,7 @@ None.
 | Governance documents finalized | STABLE |
 | Phase 1 — Backend Foundation | STABLE |
 | Phase 2 — Metrics & Nodes | STABLE |
+| Phase 3 — Realtime Pipeline | STABLE |
 
 ---
 
