@@ -1,24 +1,34 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from db import check_db, close_db
 from redis_client import check_redis, close_redis
+from routers.metrics import router as metrics_router
+from routers.nodes import router as nodes_router
 from scheduler import start_scheduler, stop_scheduler
+
+_TESTING = os.environ.get("NETPULSE_TESTING", "").lower() in ("1", "true")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await check_db()
     await check_redis()
-    start_scheduler()
+    if not _TESTING:
+        start_scheduler()
     yield
-    stop_scheduler()
+    if not _TESTING:
+        stop_scheduler()
     await close_redis()
     await close_db()
 
 
 app = FastAPI(lifespan=lifespan)
+
+app.include_router(nodes_router)
+app.include_router(metrics_router)
 
 
 @app.get("/api/health")

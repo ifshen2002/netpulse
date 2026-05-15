@@ -12,7 +12,7 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse"
 )
 
-engine: AsyncEngine = create_async_engine(DATABASE_URL)
+engine: AsyncEngine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
 
 
 async def check_db() -> bool:

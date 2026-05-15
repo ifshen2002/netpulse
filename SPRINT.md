@@ -36,16 +36,16 @@ Phase 8 → CI/CD (pipeline-only, no auto-deploy)
 # 3. Current Status (MUTABLE)
 
 ## Current Phase
-Phase 1 — COMPLETE
+Phase 2 — COMPLETE
 
 ## Current Focus
-Phase 1 exit criteria met. Ready for Phase 2.
+Phase 2 exit criteria met. Ready for Phase 3.
 
 ## Latest Stable Milestone
-Phase 1 Backend Foundation: docker compose boots clean, healthcheck returns 200, integration test passes.
+Phase 2 Metrics & Nodes: 3 nodes reporting, metrics pipeline running (collect → normalize → DB + Redis), APIs returning data, retention cleanup active, 20 tests passing.
 
 ## Next Action
-Begin Phase 2 — Metrics & Nodes. First step: implement Node-1 psutil collector.
+Begin Phase 3 — Realtime Pipeline. First step: WebSocket manager for in-memory broadcast.
 
 ## Blockers
 None.
@@ -209,6 +209,7 @@ None.
 |---|---|
 | Governance documents finalized | STABLE |
 | Phase 1 — Backend Foundation | STABLE |
+| Phase 2 — Metrics & Nodes | STABLE |
 
 ---
 
