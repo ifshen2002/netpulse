@@ -43,3 +43,26 @@ async def test_websocket_two_clients_both_receive():
         e2 = await _recv_with_timeout(ws2)
         assert e1["type"] == "metric_update"
         assert e2["type"] == "metric_update"
+
+
+@pytest.mark.asyncio
+async def test_websocket_disconnect_cleanup():
+    ws = await _connect()
+    # Receive one event to confirm connection alive
+    event = await _recv_with_timeout(ws, timeout=5.0)
+    assert event["type"] == "metric_update"
+    # Explicit close
+    await ws.close()
+    # Verify close is idempotent — calling close again should not hang
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_websocket_reconnect_after_disconnect():
+    async with await _connect() as ws1:
+        await _recv_with_timeout(ws1, timeout=5.0)
+        # ws1 closes via async with
+    # Reconnect — must succeed with fresh connection
+    async with await _connect() as ws2:
+        event = await _recv_with_timeout(ws2, timeout=5.0)
+        assert event["type"] == "metric_update"

@@ -9,3 +9,4 @@ build/
 pgdata/
 node_modules/
 .claude/
+htmlcov/

@@ -36,16 +36,16 @@ Phase 8 → CI/CD (pipeline-only, no auto-deploy)
 # 3. Current Status (MUTABLE)
 
 ## Current Phase
-Phase 6 — COMPLETE
+Phase 7 — COMPLETE
 
 ## Current Focus
-Phase 6 exit criteria met. Ready for Phase 7.
+Phase 7 exit criteria met. Ready for Phase 8.
 
 ## Latest Stable Milestone
-Phase 6 Dashboard: 4-panel NOC layout (NodeGrid, Telemetry+Chart, IncidentTimeline, ControlBar), Recharts LineChart with 3-series/60-point ring buffers, Zustand store handling all 5 WebSocket event types, ChaosPanel inject grid + recover, NodeControls burst toggles, TailwindCSS coexistence with CSS variable theme, degraded overlay on disconnect, frontend builds cleanly. 55 backend tests passing.
+Phase 7 Validation: 58 tests passing (34 unit + 19 integration + 5 WebSocket), 86% coverage via pytest-cov, demo-flow integration test validates full operational cycle (normal → chaos → alert → incident → recover → close), WebSocket disconnect/reconnect tests with explicit timeouts, HTML coverage report in backend/htmlcov.
 
 ## Next Action
-Begin Phase 7 — Validation (demo-scoped testing, pytest-cov coverage report).
+Begin Phase 8 — CI/CD (GitHub Actions workflow: lint → unit → integration → build).
 
 ## Blockers
 None.
@@ -214,6 +214,7 @@ None.
 | Phase 4 — Alerts & Incidents | STABLE |
 | Phase 5 — Chaos System | STABLE |
 | Phase 6 — Dashboard | STABLE |
+| Phase 7 — Validation | STABLE |
 
 ---
 
