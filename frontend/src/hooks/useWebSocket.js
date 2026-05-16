@@ -5,8 +5,7 @@ const MAX_RETRIES = 5
 const RETRY_BASE_MS = 1000
 
 export default function useWebSocket() {
-  const updateMetric = useMetricsStore((s) => s.updateMetric)
-  const setConnected = useMetricsStore((s) => s.setConnected)
+  const store = useMetricsStore
   const retries = useRef(0)
   const wsRef = useRef(null)
 
@@ -21,14 +20,34 @@ export default function useWebSocket() {
 
       ws.onopen = () => {
         retries.current = 0
-        setConnected(true)
+        store.getState().setConnected(true)
+        store.getState().fetchChaosStatus()
       }
 
       ws.onmessage = (msg) => {
         try {
           const event = JSON.parse(msg.data)
-          if (event.type === 'metric_update') {
-            updateMetric(event)
+          const s = store.getState()
+          switch (event.type) {
+            case 'metric_update':
+              s.updateMetric(event)
+              break
+            case 'alert_fired':
+              s.addAlert(event)
+              break
+            case 'incident_opened':
+              s.addIncident(event)
+              break
+            case 'incident_closed':
+              s.closeIncident(event)
+              break
+            case 'node_status_changed':
+              s.updateMetric({
+                node_id: event.node_id,
+                status: event.status,
+                timestamp: event.timestamp,
+              })
+              break
           }
         } catch {
           // ignore malformed messages
@@ -36,7 +55,7 @@ export default function useWebSocket() {
       }
 
       ws.onclose = () => {
-        setConnected(false)
+        store.getState().setConnected(false)
         wsRef.current = null
         if (stopped) return
         const delay = Math.min(RETRY_BASE_MS * 2 ** retries.current, 30000)
@@ -58,5 +77,5 @@ export default function useWebSocket() {
         wsRef.current = null
       }
     }
-  }, [updateMetric, setConnected])
+  }, [])
 }

@@ -36,16 +36,16 @@ Phase 8 → CI/CD (pipeline-only, no auto-deploy)
 # 3. Current Status (MUTABLE)
 
 ## Current Phase
-Phase 5 — COMPLETE
+Phase 6 — COMPLETE
 
 ## Current Focus
-Phase 5 exit criteria met. Ready for Phase 6.
+Phase 6 exit criteria met. Ready for Phase 7.
 
 ## Latest Stable Milestone
-Phase 5 Chaos System: in-memory chaos registry, apply_overlay() as single mutation point in pipeline (latency_spike, cpu_spike, packet_loss with deterministic drop), alert-only types (db_exhaustion, cache_unavailable), recover_all() clears registry + closes chaos_events rows, burst mode via scheduler reschedule, chaos API endpoints, 55 tests passing.
+Phase 6 Dashboard: 4-panel NOC layout (NodeGrid, Telemetry+Chart, IncidentTimeline, ControlBar), Recharts LineChart with 3-series/60-point ring buffers, Zustand store handling all 5 WebSocket event types, ChaosPanel inject grid + recover, NodeControls burst toggles, TailwindCSS coexistence with CSS variable theme, degraded overlay on disconnect, frontend builds cleanly. 55 backend tests passing.
 
 ## Next Action
-Begin Phase 6 — Dashboard (NodeCard, MetricsChart, AlertBanner, IncidentTimeline, ChaosPanel, NodeControls).
+Begin Phase 7 — Validation (demo-scoped testing, pytest-cov coverage report).
 
 ## Blockers
 None.
@@ -213,6 +213,7 @@ None.
 | Phase 3 — Realtime Pipeline | STABLE |
 | Phase 4 — Alerts & Incidents | STABLE |
 | Phase 5 — Chaos System | STABLE |
+| Phase 6 — Dashboard | STABLE |
 
 ---
 

@@ -1,48 +1,112 @@
+import { useState, useEffect, useRef } from 'react'
 import useWebSocket from './hooks/useWebSocket'
 import useMetricsStore from './store/metricsStore'
+import NodeCard from './components/NodeCard'
+import MetricsChart from './components/MetricsChart'
+import AlertBanner from './components/AlertBanner'
+import IncidentTimeline from './components/IncidentTimeline'
+import ChaosPanel from './components/ChaosPanel'
+import NodeControls from './components/NodeControls'
 
-const STATUS_COLORS = { green: '#22c55e', yellow: '#eab308', red: '#ef4444', gray: '#6b7280' }
-
-function MetricRow({ nodeId, data }) {
-  if (!data) return null
-  return (
-    <tr>
-      <td style={{ fontWeight: 600 }}>{nodeId}</td>
-      <td style={{ color: STATUS_COLORS[data.status] || '#888' }}>{data.status}</td>
-      <td>{data.cpu.toFixed(1)}%</td>
-      <td>{data.memory.toFixed(1)}%</td>
-      <td>{data.disk.toFixed(1)}%</td>
-      <td>{data.latency_ms.toFixed(1)}ms</td>
-      <td>{data.packet_loss_pct.toFixed(1)}%</td>
-    </tr>
-  )
-}
+const NODE_IDS = ['node-1', 'node-2', 'node-3']
 
 export default function App() {
   useWebSocket()
-  const metrics = useMetricsStore((s) => s.metrics)
   const connected = useMetricsStore((s) => s.connected)
+  const [showDegraded, setShowDegraded] = useState(false)
+  const disconnectSince = useRef(null)
+
+  useEffect(() => {
+    if (!connected) {
+      disconnectSince.current = Date.now()
+      const timer = setTimeout(() => setShowDegraded(true), 10000)
+      return () => clearTimeout(timer)
+    } else {
+      disconnectSince.current = null
+      setShowDegraded(false)
+    }
+  }, [connected])
 
   return (
-    <main style={{ maxWidth: 800, margin: '2rem auto', fontFamily: 'monospace' }}>
-      <h1>NetPulse — Live Metrics</h1>
-      <p>
-        WebSocket: <span style={{ color: connected ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
-          {connected ? 'CONNECTED' : 'DISCONNECTED'}
-        </span>
-      </p>
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
-        <thead>
-          <tr style={{ borderBottom: '2px solid #333', textAlign: 'left' }}>
-            <th>Node</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Latency</th><th>Packet Loss</th>
-          </tr>
-        </thead>
-        <tbody>
-          {['node-1', 'node-2', 'node-3'].map((id) => (
-            <MetricRow key={id} nodeId={id} data={metrics[id]} />
+    <main className="min-h-screen p-3" style={{ background: 'var(--bg)' }}>
+      {/* header */}
+      <div className="flex items-center justify-between mb-3 px-1">
+        <h1 style={{ margin: 0, fontSize: 20, letterSpacing: -0.5 }}>NetPulse NOC</h1>
+        <div className="flex items-center gap-2 text-xs">
+          <span
+            className="w-2 h-2 rounded-full"
+            style={{ backgroundColor: connected ? 'var(--green)' : 'var(--red)' }}
+          />
+          <span style={{ color: connected ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+            {connected ? 'LIVE' : 'DISCONNECTED'}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 relative">
+        {/* degraded overlay */}
+        {showDegraded && (
+          <div
+            className="absolute inset-0 z-10 flex items-center justify-center rounded-lg"
+            style={{ background: 'rgba(15,17,23,0.75)', backdropFilter: 'blur(2px)' }}
+          >
+            <p className="text-sm font-semibold" style={{ color: 'var(--yellow)' }}>
+              Live data paused — reconnecting...
+            </p>
+          </div>
+        )}
+
+        {/* Panel 1: NodeGrid */}
+        <div className="grid grid-cols-3 gap-3">
+          {NODE_IDS.map((id) => (
+            <NodeCard key={id} nodeId={id} />
           ))}
-        </tbody>
-      </table>
+        </div>
+
+        {/* Panel 2: Telemetry (chart + alerts) */}
+        <div
+          className="rounded-lg p-3 flex flex-col gap-2"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+        >
+          <h2>Telemetry</h2>
+          <div style={{ height: 220 }}>
+            <MetricsChart />
+          </div>
+          <div
+            className="rounded mt-1 overflow-hidden"
+            style={{ height: 28, background: 'var(--bg)', border: '1px solid var(--border)' }}
+          >
+            <AlertBanner />
+          </div>
+        </div>
+
+        {/* Panel 3: IncidentTimeline */}
+        <div
+          className="rounded-lg p-3"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', maxHeight: 180, overflowY: 'auto' }}
+        >
+          <h2>Incidents</h2>
+          <IncidentTimeline />
+        </div>
+
+        {/* Panel 4: ControlBar (chaos + node controls) */}
+        <div className="grid grid-cols-2 gap-3">
+          <div
+            className="rounded-lg p-3"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+          >
+            <h2>Chaos Injection</h2>
+            <ChaosPanel />
+          </div>
+          <div
+            className="rounded-lg p-3"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+          >
+            <h2>Burst Mode</h2>
+            <NodeControls />
+          </div>
+        </div>
+      </div>
     </main>
   )
 }
