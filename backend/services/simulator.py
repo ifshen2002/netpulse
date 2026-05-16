@@ -57,3 +57,9 @@ def set_burst(node_id: str, burst: bool) -> None:
 
 def is_on(node_id: str) -> bool:
     return _on.get(node_id, False)
+
+
+def any_burst(node_id: str | None = None) -> bool:
+    if node_id:
+        return _burst.get(node_id, False)
+    return any(_burst.values())

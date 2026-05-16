@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from db import check_db, close_db
 from redis_client import check_redis, close_redis
 from routers.alerts import router as alerts_router
+from routers.chaos import router as chaos_router
 from routers.incidents import router as incidents_router
 from routers.metrics import router as metrics_router
 from routers.nodes import router as nodes_router
@@ -35,6 +36,7 @@ app.include_router(metrics_router)
 app.include_router(websocket_router)
 app.include_router(alerts_router)
 app.include_router(incidents_router)
+app.include_router(chaos_router)
 
 
 @app.get("/api/health")

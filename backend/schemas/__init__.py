@@ -37,3 +37,22 @@ class IncidentOut(BaseModel):
     status: str
     opened_at: str
     closed_at: str | None = None
+
+
+class ChaosInjectIn(BaseModel):
+    node_id: str = Field(min_length=1)
+    chaos_type: str = Field(min_length=1)
+    config: dict | None = None
+
+
+class ChaosRecoverIn(BaseModel):
+    node_id: str | None = None
+
+
+class ChaosEventOut(BaseModel):
+    id: str
+    chaos_type: str
+    node_id: str
+    started_at: str
+    ended_at: str | None = None
+    config: dict | None = None

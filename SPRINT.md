@@ -36,16 +36,16 @@ Phase 8 → CI/CD (pipeline-only, no auto-deploy)
 # 3. Current Status (MUTABLE)
 
 ## Current Phase
-Phase 4 — COMPLETE
+Phase 5 — COMPLETE
 
 ## Current Focus
-Phase 4 exit criteria met. Ready for Phase 5.
+Phase 5 exit criteria met. Ready for Phase 6.
 
 ## Latest Stable Milestone
-Phase 4 Alerts & Incidents: alert evaluation (cpu_high, latency_spike, heartbeat_timeout) with 60s dedup, incident state machine (open → 3-clean → close), alert_fired/incident_opened/incident_closed WebSocket events, alert + incident API endpoints, 38 tests passing.
+Phase 5 Chaos System: in-memory chaos registry, apply_overlay() as single mutation point in pipeline (latency_spike, cpu_spike, packet_loss with deterministic drop), alert-only types (db_exhaustion, cache_unavailable), recover_all() clears registry + closes chaos_events rows, burst mode via scheduler reschedule, chaos API endpoints, 55 tests passing.
 
 ## Next Action
-Begin Phase 5 — Chaos System. First step: chaos registry + apply_overlay() in collection pipeline.
+Begin Phase 6 — Dashboard (NodeCard, MetricsChart, AlertBanner, IncidentTimeline, ChaosPanel, NodeControls).
 
 ## Blockers
 None.
@@ -212,6 +212,7 @@ None.
 | Phase 2 — Metrics & Nodes | STABLE |
 | Phase 3 — Realtime Pipeline | STABLE |
 | Phase 4 — Alerts & Incidents | STABLE |
+| Phase 5 — Chaos System | STABLE |
 
 ---
 

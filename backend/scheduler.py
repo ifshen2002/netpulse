@@ -8,9 +8,10 @@ from db import engine
 from redis_client import client as redis
 from routers.websocket import manager
 from services.alerting import evaluate as evaluate_alerts, check_heartbeats
+from services.chaos import apply_overlay
 from services.monitoring import collect as collect_node1
 from services.normalization import normalize
-from services.simulator import generate as generate_synthetic
+from services.simulator import any_burst, generate as generate_synthetic
 
 scheduler = AsyncIOScheduler()
 _started = False
@@ -28,7 +29,9 @@ async def _collect_all_nodes() -> None:
         if raw is None:
             continue
         m = normalize(raw)
-        # Chaos overlay slot — Phase 5 inserts apply_overlay() here
+        m = apply_overlay(m)
+        if m is None:
+            continue
         normalized.append(m)
 
     if not normalized:
@@ -118,3 +121,12 @@ def stop_scheduler() -> None:
     if _started and scheduler.running:
         scheduler.shutdown(wait=False)
         _started = False
+
+
+def sync_burst_interval() -> None:
+    if not scheduler.running:
+        return
+    if any_burst():
+        scheduler.reschedule_job("collect_metrics", trigger="interval", seconds=1)
+    else:
+        scheduler.reschedule_job("collect_metrics", trigger="interval", seconds=5)

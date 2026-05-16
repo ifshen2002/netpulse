@@ -173,6 +173,28 @@ async def _fire_alert(
     return alert_id, incident_id
 
 
+# ── standalone alert (chaos alert-only types) ─────────────────────
+
+async def fire_standalone_alert(
+    node_id: str, alert_type: str, message: str
+) -> str:
+    alert_id = await _insert_alert(node_id, None, alert_type, message)
+    now = _utcnow()
+    await manager.broadcast(
+        _event(
+            {
+                "type": "alert_fired",
+                "alert_id": alert_id,
+                "node_id": node_id,
+                "alert_type": alert_type,
+                "message": message,
+                "timestamp": now.isoformat(),
+            }
+        )
+    )
+    return alert_id
+
+
 # ── recovery ──────────────────────────────────────────────────────
 
 async def _handle_recovery(node_id: str) -> None:
