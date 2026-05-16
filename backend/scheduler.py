@@ -7,6 +7,7 @@ from sqlalchemy import text
 from db import engine
 from redis_client import client as redis
 from routers.websocket import manager
+from services.alerting import evaluate as evaluate_alerts, check_heartbeats
 from services.monitoring import collect as collect_node1
 from services.normalization import normalize
 from services.simulator import generate as generate_synthetic
@@ -91,11 +92,22 @@ async def _cleanup_retention() -> None:
         )
 
 
+async def _evaluate_alerts() -> None:
+    for node_id in ("node-1", "node-2", "node-3"):
+        await evaluate_alerts(node_id)
+
+
+async def _check_heartbeats_job() -> None:
+    await check_heartbeats()
+
+
 def start_scheduler() -> None:
     global _started
     if not _started:
         scheduler.add_job(_collect_all_nodes, "interval", seconds=5, id="collect_metrics")
         scheduler.add_job(_push_metrics, "interval", seconds=1, id="push_metrics")
+        scheduler.add_job(_evaluate_alerts, "interval", seconds=5, id="evaluate_alerts")
+        scheduler.add_job(_check_heartbeats_job, "interval", seconds=15, id="check_heartbeats")
         scheduler.add_job(_cleanup_retention, "interval", hours=1, id="cleanup_retention")
         scheduler.start()
         _started = True

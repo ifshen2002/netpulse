@@ -36,16 +36,16 @@ Phase 8 → CI/CD (pipeline-only, no auto-deploy)
 # 3. Current Status (MUTABLE)
 
 ## Current Phase
-Phase 3 — COMPLETE
+Phase 4 — COMPLETE
 
 ## Current Focus
-Phase 3 exit criteria met. Ready for Phase 4.
+Phase 4 exit criteria met. Ready for Phase 5.
 
 ## Latest Stable Milestone
-Phase 3 Realtime Pipeline: WebSocket endpoint live, 1s metric_update push from Redis via ConnectionManager, frontend Vite+React+Zustand scaffold receiving live events, 23 tests passing.
+Phase 4 Alerts & Incidents: alert evaluation (cpu_high, latency_spike, heartbeat_timeout) with 60s dedup, incident state machine (open → 3-clean → close), alert_fired/incident_opened/incident_closed WebSocket events, alert + incident API endpoints, 38 tests passing.
 
 ## Next Action
-Begin Phase 4 — Alerts & Incidents. First step: alert threshold evaluation (cpu_high, latency_spike, heartbeat_timeout).
+Begin Phase 5 — Chaos System. First step: chaos registry + apply_overlay() in collection pipeline.
 
 ## Blockers
 None.
@@ -211,6 +211,7 @@ None.
 | Phase 1 — Backend Foundation | STABLE |
 | Phase 2 — Metrics & Nodes | STABLE |
 | Phase 3 — Realtime Pipeline | STABLE |
+| Phase 4 — Alerts & Incidents | STABLE |
 
 ---
 

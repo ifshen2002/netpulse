@@ -19,3 +19,21 @@ class NodeOut(BaseModel):
     status: str
     last_seen: str | None = None
     created_at: str | None = None
+
+
+class AlertOut(BaseModel):
+    id: str
+    node_id: str
+    incident_id: str | None = None
+    alert_type: str
+    message: str
+    fired_at: str
+    resolved_at: str | None = None
+
+
+class IncidentOut(BaseModel):
+    id: str
+    title: str
+    status: str
+    opened_at: str
+    closed_at: str | None = None
