@@ -15,7 +15,8 @@ export default function useWebSocket() {
     function connect() {
       if (stopped || retries.current >= MAX_RETRIES) return
 
-      const ws = new WebSocket('ws://localhost:8000/ws')
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const ws = new WebSocket(`${proto}//${location.host}/ws`)
       wsRef.current = ws
 
       ws.onopen = () => {
@@ -42,11 +43,7 @@ export default function useWebSocket() {
               s.closeIncident(event)
               break
             case 'node_status_changed':
-              s.updateMetric({
-                node_id: event.node_id,
-                status: event.status,
-                timestamp: event.timestamp,
-              })
+              s.setNodeStatus(event.node_id, event.status)
               break
           }
         } catch {
@@ -77,5 +74,5 @@ export default function useWebSocket() {
         wsRef.current = null
       }
     }
-  }, [])
+  }, [store])
 }
