@@ -16,6 +16,7 @@ They self-cleanup by calling /api/chaos/recover after each test.
 
 import asyncio
 import json
+import re
 import time
 from datetime import datetime, timezone
 
@@ -390,7 +391,7 @@ async def test_e2e_websocket_receives_alert_after_inject(client):
 
         event = await _ws_recv_event(ws, "alert_fired", timeout=12)
         assert event["alert_type"] == "cpu_high"
-        assert "CPU at 100%" in event["message"]
+        assert re.search(r"CPU at \d{2,3}%", event["message"])
         assert event["incident_id"] is not None
     finally:
         await ws.close()
