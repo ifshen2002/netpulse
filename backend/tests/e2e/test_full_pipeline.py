@@ -83,49 +83,55 @@ async def test_e2e_critical_cpu_inject_metrics_api(client):
     """
     Click CRITICAL CPU → /api/metrics/node-2 shows CPU ≥ 90 within 15s.
     """
-    t0 = time.monotonic()
+    try:
+        t0 = time.monotonic()
 
-    resp = await client.post("/api/chaos/inject", json={
-        "node_id": "node-2",
-        "chaos_type": "cpu_spike",
-        "config": {"intensity": "critical"},
-    })
-    assert resp.status_code == 200, f"Inject failed: {resp.text}"
-    assert resp.json()["success"] is True
+        resp = await client.post("/api/chaos/inject", json={
+            "node_id": "node-2",
+            "chaos_type": "cpu_spike",
+            "config": {"intensity": "critical"},
+        })
+        assert resp.status_code == 200, f"Inject failed: {resp.text}"
+        assert resp.json()["success"] is True
 
-    # Poll metrics API until CPU reflects injection
-    for _ in range(20):
-        await asyncio.sleep(0.75)
+        # Poll metrics API until CPU reflects injection
+        for _ in range(20):
+            await asyncio.sleep(0.75)
+            resp = await client.get("/api/metrics/node-2?limit=1")
+            data = resp.json()
+            if data["data"] and data["data"][0]["cpu"] >= 90:
+                elapsed = time.monotonic() - t0
+                assert elapsed < 15, f"Took {elapsed:.1f}s"
+                return
+
+        # Last attempt
         resp = await client.get("/api/metrics/node-2?limit=1")
-        data = resp.json()
-        if data["data"] and data["data"][0]["cpu"] >= 90:
-            elapsed = time.monotonic() - t0
-            assert elapsed < 15, f"Took {elapsed:.1f}s"
-            return
-
-    # Last attempt
-    resp = await client.get("/api/metrics/node-2?limit=1")
-    last_cpu = resp.json()["data"][0]["cpu"] if resp.json()["data"] else "N/A"
-    pytest.fail(f"CPU never reached ≥90. Last CPU={last_cpu}")
+        last_cpu = resp.json()["data"][0]["cpu"] if resp.json()["data"] else "N/A"
+        pytest.fail(f"CPU never reached ≥90. Last CPU={last_cpu}")
+    finally:
+        await client.post("/api/chaos/recover", json={"node_id": "node-2"})
 
 
 @pytest.mark.asyncio
 async def test_e2e_high_cpu_inject_metrics_api(client):
     """Click HIGH CPU → metrics show CPU ≥ 80 within 15s."""
-    resp = await client.post("/api/chaos/inject", json={
-        "node_id": "node-2",
-        "chaos_type": "cpu_spike",
-        "config": {"intensity": "high"},
-    })
-    assert resp.status_code == 200
-    assert resp.json()["success"] is True
+    try:
+        resp = await client.post("/api/chaos/inject", json={
+            "node_id": "node-2",
+            "chaos_type": "cpu_spike",
+            "config": {"intensity": "high"},
+        })
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
 
-    for _ in range(20):
-        await asyncio.sleep(0.75)
-        resp = await client.get("/api/metrics/node-2?limit=1")
-        if resp.json()["data"] and resp.json()["data"][0]["cpu"] >= 80:
-            return
-    pytest.fail("CPU never reached ≥80")
+        for _ in range(20):
+            await asyncio.sleep(0.75)
+            resp = await client.get("/api/metrics/node-2?limit=1")
+            if resp.json()["data"] and resp.json()["data"][0]["cpu"] >= 80:
+                return
+        pytest.fail("CPU never reached ≥80")
+    finally:
+        await client.post("/api/chaos/recover", json={"node_id": "node-2"})
 
 
 # ── E2E: chaos inject → alert fires ────────────────────────────────────
@@ -136,48 +142,54 @@ async def test_e2e_critical_cpu_fires_alert_via_api(client):
     Click CRITICAL CPU → cpu_high alert visible in /api/alerts immediately
     (force-evaluation fires alert in the inject handler itself).
     """
-    resp = await client.post("/api/chaos/inject", json={
-        "node_id": "node-2",
-        "chaos_type": "cpu_spike",
-        "config": {"intensity": "critical"},
-    })
-    assert resp.status_code == 200
-    assert resp.json()["success"] is True
+    try:
+        resp = await client.post("/api/chaos/inject", json={
+            "node_id": "node-2",
+            "chaos_type": "cpu_spike",
+            "config": {"intensity": "critical"},
+        })
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
 
-    # Force-evaluate fires immediately, so alert should be in the API
-    # within a few polls
-    for _ in range(10):
-        await asyncio.sleep(0.5)
-        resp = await client.get("/api/alerts?node_id=node-2&limit=5")
-        alerts = resp.json()["data"]
-        cpu_alerts = [
-            a for a in alerts
-            if a["alert_type"] == "cpu_high"
-            and "CPU at" in a.get("message", "")
-        ]
-        if cpu_alerts:
-            assert cpu_alerts[0]["incident_id"] is not None, "Alert must link to an incident"
-            return
-    pytest.fail("No cpu_high alert with 'CPU at' found")
+        # Force-evaluate fires immediately, so alert should be in the API
+        # within a few polls
+        for _ in range(10):
+            await asyncio.sleep(0.5)
+            resp = await client.get("/api/alerts?node_id=node-2&limit=5")
+            alerts = resp.json()["data"]
+            cpu_alerts = [
+                a for a in alerts
+                if a["alert_type"] == "cpu_high"
+                and "CPU at" in a.get("message", "")
+            ]
+            if cpu_alerts:
+                assert cpu_alerts[0]["incident_id"] is not None, "Alert must link to an incident"
+                return
+        pytest.fail("No cpu_high alert with 'CPU at' found")
+    finally:
+        await client.post("/api/chaos/recover", json={"node_id": "node-2"})
 
 
 @pytest.mark.asyncio
 async def test_e2e_high_cpu_fires_alert_via_api(client):
     """Click HIGH CPU → cpu_high alert visible via API."""
-    resp = await client.post("/api/chaos/inject", json={
-        "node_id": "node-2",
-        "chaos_type": "cpu_spike",
-        "config": {"intensity": "high"},
-    })
-    assert resp.status_code == 200
-    assert resp.json()["success"] is True
+    try:
+        resp = await client.post("/api/chaos/inject", json={
+            "node_id": "node-2",
+            "chaos_type": "cpu_spike",
+            "config": {"intensity": "high"},
+        })
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
 
-    for _ in range(10):
-        await asyncio.sleep(0.5)
-        resp = await client.get("/api/alerts?node_id=node-2&limit=5")
-        if any(a["alert_type"] == "cpu_high" for a in resp.json()["data"]):
-            return
-    pytest.fail("No cpu_high alert found")
+        for _ in range(10):
+            await asyncio.sleep(0.5)
+            resp = await client.get("/api/alerts?node_id=node-2&limit=5")
+            if any(a["alert_type"] == "cpu_high" for a in resp.json()["data"]):
+                return
+        pytest.fail("No cpu_high alert found")
+    finally:
+        await client.post("/api/chaos/recover", json={"node_id": "node-2"})
 
 
 # ── E2E: incident lifecycle (open → recover → close) ────────────────────

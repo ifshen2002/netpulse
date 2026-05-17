@@ -6,7 +6,7 @@ from schemas import ChaosInjectIn, ChaosRecoverIn
 from services import chaos as chaos_svc
 from services.chaos import OVERLAY_TYPES
 from scheduler import sync_burst_interval
-from services.alerting import clear_cooldown, fire_standalone_alert, resolve_for_node
+from services.alerting import clear_cooldown, fire_standalone_alert
 from services.simulator import set_burst
 
 router = APIRouter(prefix="/api/chaos", tags=["chaos"])
