@@ -6,7 +6,7 @@ from schemas import ChaosInjectIn, ChaosRecoverIn
 from services import chaos as chaos_svc
 from services.chaos import OVERLAY_TYPES
 from scheduler import sync_burst_interval
-from services.alerting import clear_cooldown, fire_standalone_alert
+from services.alerting import clear_cooldown, fire_standalone_alert, resolve_for_node
 from services.simulator import set_burst
 
 router = APIRouter(prefix="/api/chaos", tags=["chaos"])
@@ -100,6 +100,13 @@ async def recover(body: ChaosRecoverIn | None = None):
     node_id = body.node_id if body else None
     chaos_type = body.chaos_type if body else None
     removed = await chaos_svc.recover_all(node_id, chaos_type)
+    if removed > 0:
+        from services.alerting import resolve_for_node as _resolve
+        if node_id:
+            await _resolve(node_id)
+        else:
+            for nid in ("node-2", "node-3"):
+                await _resolve(nid)
     return {"success": True, "data": {"removed": removed}}
 
 

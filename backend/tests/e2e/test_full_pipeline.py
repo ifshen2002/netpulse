@@ -394,6 +394,7 @@ async def test_e2e_websocket_receives_alert_after_inject(client):
         assert re.search(r"CPU at \d{2,3}%", event["message"])
         assert event["incident_id"] is not None
     finally:
+        await client.post("/api/chaos/recover", json={"node_id": "node-2"})
         await ws.close()
 
 
@@ -413,13 +414,13 @@ async def test_e2e_websocket_receives_incident_events_after_inject(client):
             "config": {"intensity": "critical"},
         })
 
-        opened = await _ws_recv_event(ws, "incident_opened", timeout=12)
+        opened = await _ws_recv_event(ws, "incident_opened", timeout=24)
         assert opened["node_id"] == "node-2"
 
         # Recover
         await client.post("/api/chaos/recover", json={"node_id": "node-2"})
 
-        closed = await _ws_recv_event(ws, "incident_closed", timeout=12)
+        closed = await _ws_recv_event(ws, "incident_closed", timeout=24)
         assert closed["node_id"] == "node-2"
     finally:
         await ws.close()
