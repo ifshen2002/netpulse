@@ -225,6 +225,9 @@ async def _handle_recovery(node_id: str) -> None:
 async def resolve_for_node(node_id: str, now: datetime | None = None) -> None:
     """Resolve any open incident for a node immediately (called on chaos recover)."""
     incident_id = _open_incidents.pop(node_id, None)
+    _clear_cooldowns(node_id)
+    _clean_streaks.pop(node_id, None)
+
     if incident_id is None:
         return
 
@@ -244,9 +247,6 @@ async def resolve_for_node(node_id: str, now: datetime | None = None) -> None:
             ),
             {"now": now, "id": incident_id},
         )
-
-    _clear_cooldowns(node_id)
-    _clean_streaks.pop(node_id, None)
 
     await manager.broadcast(
         _event(

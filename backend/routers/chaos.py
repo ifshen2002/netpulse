@@ -100,6 +100,20 @@ async def recover(body: ChaosRecoverIn | None = None):
     node_id = body.node_id if body else None
     chaos_type = body.chaos_type if body else None
     removed = await chaos_svc.recover_all(node_id, chaos_type)
+
+    # Refresh Redis with clean (non-overlaid) metrics so the scheduler
+    # does not re-fire on stale high-CPU/latency data from before recover.
+    from services.simulator import generate as _gen
+    from services.normalization import normalize as _norm
+    targets = [node_id] if node_id else ["node-2", "node-3"]
+    for nid in targets:
+        if nid == "node-1":
+            continue
+        raw = _gen(nid)
+        if raw:
+            m = _norm(raw)
+            await redis.set(f"metrics:latest:{nid}", json.dumps(m))
+
     if removed > 0:
         from services.alerting import resolve_for_node as _resolve
         if node_id:

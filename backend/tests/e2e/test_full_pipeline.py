@@ -68,12 +68,16 @@ async def _ws_recv_event(ws, event_type, timeout=12.0):
 
 
 async def _ws_drain(ws, duration=1.0):
-    """Drain pre-existing events from the websocket."""
-    try:
-        while True:
-            await asyncio.wait_for(ws.recv(), timeout=duration)
-    except asyncio.TimeoutError:
-        pass
+    """Drain pre-existing events from the websocket for at most `duration` seconds."""
+    deadline = time.monotonic() + duration
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            await asyncio.wait_for(ws.recv(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
 
 
 # ── E2E: chaos inject → metrics API reflects change ────────────────────
@@ -416,8 +420,12 @@ async def test_e2e_websocket_receives_incident_events_after_inject(client):
     Click CRITICAL CPU → WebSocket receives both incident_opened
     and after recover receives incident_closed.
     """
+    # Ensure clean starting state — close any lingering incidents first.
+    await client.post("/api/chaos/recover", json={})
+    await asyncio.sleep(1.5)
+
     ws = await _ws_connect()
-    await _ws_drain(ws, duration=1.0)
+    await _ws_drain(ws, duration=2.0)
 
     try:
         await client.post("/api/chaos/inject", json={
