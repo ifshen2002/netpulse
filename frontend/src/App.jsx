@@ -3,6 +3,7 @@ import useWebSocket from './hooks/useWebSocket'
 import useMetricsStore from './store/metricsStore'
 import NodeCard from './components/NodeCard'
 import MetricsChart from './components/MetricsChart'
+import ErrorBoundary from './components/ErrorBoundary'
 import AlertBanner from './components/AlertBanner'
 import IncidentTimeline from './components/IncidentTimeline'
 import ChaosPanel from './components/ChaosPanel'
@@ -10,29 +11,79 @@ import NodeControls from './components/NodeControls'
 
 const NODE_IDS = ['node-1', 'node-2', 'node-3']
 
+function NodeToggles() {
+  const visibleNodes = useMetricsStore((s) => s.visibleNodes)
+  const toggle = useMetricsStore((s) => s.toggleNodeVisibility)
+
+  return (
+    <div className="flex items-center gap-1 text-xs">
+      {NODE_IDS.map((nid) => {
+        const on = visibleNodes[nid] !== false
+        return (
+          <button
+            key={nid}
+            onClick={() => toggle(nid)}
+            className="rounded px-1.5 py-0.5 border transition-colors"
+            style={{
+              background: on ? 'var(--accent-bg)' : 'transparent',
+              borderColor: on ? 'var(--accent)' : 'var(--border)',
+              color: on ? 'var(--accent)' : 'var(--gray)',
+              cursor: 'pointer',
+              fontSize: 10,
+            }}
+          >
+            {nid}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function App() {
   useWebSocket()
   const connected = useMetricsStore((s) => s.connected)
+  const chaosCount = useMetricsStore((s) => s.chaosCount)
+  const incidents = useMetricsStore((s) => s.incidents)
+  const openIncidents = incidents.filter((i) => i.status === 'open').length
+  const totalIncidents = incidents.length
   const [showDegraded, setShowDegraded] = useState(false)
   const disconnectSince = useRef(null)
 
   useEffect(() => {
     if (!connected) {
       disconnectSince.current = Date.now()
-      const timer = setTimeout(() => setShowDegraded(true), 10000)
-      return () => clearTimeout(timer)
-    } else {
-      disconnectSince.current = null
-      setShowDegraded(false)
+      // Defer the reset via macrotask — avoids synchronous setState in effect.
+      // This is safe because the derived value below (!connected && …) hides
+      // the overlay during the single frame before the macrotask fires.
+      const resetTimer = setTimeout(() => setShowDegraded(false), 0)
+      const showTimer = setTimeout(() => setShowDegraded(true), 10000)
+      return () => {
+        clearTimeout(resetTimer)
+        clearTimeout(showTimer)
+      }
     }
+    disconnectSince.current = null
   }, [connected])
 
   return (
-    <main className="min-h-screen p-3" style={{ background: 'var(--bg)' }}>
+    <main className="min-h-screen p-3" style={{ background: 'var(--bg)', overflowX: 'hidden' }}>
       {/* header */}
-      <div className="flex items-center justify-between mb-3 px-1">
+      <div className="flex items-center justify-between mb-2 px-1">
         <h1 style={{ margin: 0, fontSize: 20, letterSpacing: -0.5 }}>NetPulse NOC</h1>
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-3 text-xs">
+          {/* operational counters */}
+          <div className="flex items-center gap-3" style={{ color: 'var(--gray)' }}>
+            <span title="Total chaos injections">
+              Chaos: <b style={{ color: 'var(--accent)' }}>{chaosCount}</b>
+            </span>
+            <span title="Open incidents">
+              Open: <b style={{ color: openIncidents > 0 ? 'var(--red)' : 'var(--green)' }}>{openIncidents}</b>
+            </span>
+            <span title="Total incidents">
+              Incidents: <b style={{ color: 'var(--text-h)' }}>{totalIncidents}</b>
+            </span>
+          </div>
           <span
             className="w-2 h-2 rounded-full"
             style={{ backgroundColor: connected ? 'var(--green)' : 'var(--red)' }}
@@ -68,9 +119,14 @@ export default function App() {
           className="rounded-lg p-3 flex flex-col gap-2"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
         >
-          <h2>Telemetry</h2>
+          <div className="flex items-center justify-between">
+            <h2 style={{ margin: 0 }}>Telemetry</h2>
+            <NodeToggles />
+          </div>
           <div style={{ height: 220 }}>
-            <MetricsChart />
+            <ErrorBoundary fallback="Chart unavailable — metrics still live in NodeGrid above">
+              <MetricsChart />
+            </ErrorBoundary>
           </div>
           <div
             className="rounded mt-1 overflow-hidden"

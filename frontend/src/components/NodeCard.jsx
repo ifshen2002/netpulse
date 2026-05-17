@@ -1,4 +1,4 @@
-import useMetricsStore from '../store/metricsStore'
+import useMetricsStore, { EMPTY_ARR } from '../store/metricsStore'
 
 const STATUS_COLORS = {
   green: 'var(--green)',
@@ -35,7 +35,7 @@ function Sparkline({ values }) {
 
 export default function NodeCard({ nodeId }) {
   const data = useMetricsStore((s) => s.metrics[nodeId])
-  const history = useMetricsStore((s) => s.history[nodeId] || [])
+  const history = useMetricsStore((s) => s.history[nodeId] || EMPTY_ARR)
 
   if (!data) {
     return (

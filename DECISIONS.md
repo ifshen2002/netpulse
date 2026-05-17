@@ -71,6 +71,7 @@ Do not stack fallback layers. Do not hide errors with broad try/except.
 - Logs must include timestamps and source module
 - Do not spam logs on every scheduler tick
 - Prefer explicit code over magic abstractions
+- **Zustand selectors MUST NOT create new object/array references.** Use module-level frozen constants for defaults (e.g. `EMPTY_ARR = Object.freeze([])`, `EMPTY_OBJ = Object.freeze({})`). Creating `[]` or `{}` inside a selector causes infinite re-render loops because `useSyncExternalStore` uses `Object.is` comparison, and `[] !== []`.
 
 ---
 

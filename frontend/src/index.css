@@ -15,20 +15,28 @@
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
+}
 
-  font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--text);
+html {
   background: var(--bg);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  color: var(--text);
 }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
 }
 
 h1 { font-size: 24px; font-weight: 600; color: var(--text-h); }
 h2 { font-size: 16px; font-weight: 600; color: var(--text-h); margin: 0 0 8px; }
-h3 { font-size: 13px; font-weight: 500; color: var(--text); margin: 0 0 4px; }
+h3 { font-size: 13px; font-weight: 500; margin: 0 0 4px; }

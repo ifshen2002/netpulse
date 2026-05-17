@@ -47,6 +47,7 @@ class ChaosInjectIn(BaseModel):
 
 class ChaosRecoverIn(BaseModel):
     node_id: str | None = None
+    chaos_type: str | None = None
 
 
 class ChaosEventOut(BaseModel):

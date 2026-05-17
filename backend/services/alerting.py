@@ -42,6 +42,11 @@ def _clear_cooldowns(node_id: str) -> None:
         _cooldowns.pop((node_id, alert_type), None)
 
 
+def clear_cooldown(node_id: str, alert_type: str) -> None:
+    """Clear cooldown for a specific node+alert_type (called on chaos injection)."""
+    _cooldowns.pop((node_id, alert_type), None)
+
+
 # ── broadcast helper ──────────────────────────────────────────────
 
 def _event(event_dict: dict) -> str:
@@ -163,6 +168,7 @@ async def _fire_alert(
             {
                 "type": "alert_fired",
                 "alert_id": alert_id,
+                "incident_id": incident_id,
                 "node_id": node_id,
                 "alert_type": alert_type,
                 "message": message,
@@ -185,6 +191,7 @@ async def fire_standalone_alert(
             {
                 "type": "alert_fired",
                 "alert_id": alert_id,
+                "incident_id": None,
                 "node_id": node_id,
                 "alert_type": alert_type,
                 "message": message,
@@ -198,6 +205,14 @@ async def fire_standalone_alert(
 # ── recovery ──────────────────────────────────────────────────────
 
 async def _handle_recovery(node_id: str) -> None:
+    from services.chaos import active_for_node
+
+    # Never auto-resolve while chaos overlay is active — the operator
+    # deliberately injected it and expects the incident to persist.
+    if active_for_node(node_id):
+        _clean_streaks.pop(node_id, None)
+        return
+
     if node_id not in _open_incidents:
         _clean_streaks.pop(node_id, None)
         return
@@ -205,6 +220,44 @@ async def _handle_recovery(node_id: str) -> None:
     _clean_streaks[node_id] = _clean_streaks.get(node_id, 0) + 1
     if _clean_streaks[node_id] >= RECOVERY_STREAK:
         await _resolve_incident(node_id)
+
+
+async def resolve_for_node(node_id: str, now: datetime | None = None) -> None:
+    """Resolve any open incident for a node immediately (called on chaos recover)."""
+    incident_id = _open_incidents.pop(node_id, None)
+    if incident_id is None:
+        return
+
+    now = now or _utcnow()
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE incidents SET status = 'closed', closed_at = :now "
+                "WHERE id = :id"
+            ),
+            {"now": now, "id": incident_id},
+        )
+        await conn.execute(
+            text(
+                "UPDATE alerts SET resolved_at = :now "
+                "WHERE incident_id = :id AND resolved_at IS NULL"
+            ),
+            {"now": now, "id": incident_id},
+        )
+
+    _clear_cooldowns(node_id)
+    _clean_streaks.pop(node_id, None)
+
+    await manager.broadcast(
+        _event(
+            {
+                "type": "incident_closed",
+                "incident_id": incident_id,
+                "node_id": node_id,
+                "timestamp": now.isoformat(),
+            }
+        )
+    )
 
 
 # ── public API ────────────────────────────────────────────────────

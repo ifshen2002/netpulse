@@ -9,7 +9,6 @@ import services.chaos as chaos_svc
 def _clean_state():
     chaos_svc._active.clear()
     chaos_svc._loss_counter.clear()
-    chaos_svc._config_cache.clear()
 
 
 @pytest_asyncio.fixture
@@ -36,7 +35,7 @@ async def test_inject_latency_spike_returns_event_id(client):
     data = resp.json()
     assert data["success"] is True
     assert "event_id" in data["data"]
-    assert "latency_spike" in chaos_svc._active.get("node-2", [])
+    assert "latency_spike" in chaos_svc._active.get("node-2", {})
 
 
 @pytest.mark.asyncio
