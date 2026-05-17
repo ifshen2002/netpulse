@@ -9,13 +9,45 @@ from db import engine
 from routers.websocket import manager
 
 # ── in-memory chaos registry ────────────────────────────────────────
-_active: dict[str, list[str]] = {}       # node_id → [chaos_type, ...]
-_loss_counter: dict[str, int] = {}        # node_id → call count
+_active: dict[str, dict[str, str]] = {}   # node_id → {chaos_type: intensity}
+_loss_counter: dict[str, int] = {}         # node_id → call count
+_effect_values: dict[tuple[str, str], float] = {}  # (node_id, chaos_type) → value
 
-# All chaos types from ARCHITECTURE.md Section 10
 OVERLAY_TYPES = {"latency_spike", "cpu_spike", "packet_loss"}
 ALERT_ONLY_TYPES = {"db_exhaustion", "cache_unavailable"}
 ALL_TYPES = OVERLAY_TYPES | ALERT_ONLY_TYPES
+INTENSITIES = {"low", "medium", "high", "critical"}
+
+# ── intensity → realistic range ─────────────────────────────────────
+# Values are randomly picked once per injection and stored in _effect_values.
+# This simulates real-world variance: a "high CPU" incident might be 75% or 95%.
+
+_CPU_RANGES = {
+    "low": (5, 15), "medium": (30, 50), "high": (80, 95), "critical": (95, 100),
+}
+_LATENCY_RANGES = {
+    "low": (50, 150), "medium": (200, 400), "high": (500, 800), "critical": (800, 1500),
+}
+_LOSS_RANGES = {"low": (10, 20), "medium": (5, 10), "high": (2, 5), "critical": (1, 2)}
+
+DEFAULT_INTENSITY = "high"
+
+
+def _random_in_range(intensity: str, ranges: dict) -> float:
+    lo, hi = ranges[intensity]
+    return random.uniform(lo, hi)
+
+
+def _get_effect(node_id: str, chaos_type: str) -> float | None:
+    return _effect_values.get((node_id, chaos_type))
+
+
+def _set_effect(node_id: str, chaos_type: str, value: float) -> None:
+    _effect_values[(node_id, chaos_type)] = value
+
+
+def _clear_effect(node_id: str, chaos_type: str) -> None:
+    _effect_values.pop((node_id, chaos_type), None)
 
 
 def _utcnow() -> datetime:
@@ -31,23 +63,24 @@ def apply_overlay(metrics: dict) -> dict | None:
     if node_id == "node-1":
         return metrics
 
-    active = _active.get(node_id, [])
+    active = _active.get(node_id, {})
     if not active:
         return metrics
 
-    # Copy before mutating — raw metrics are never modified in-place
     m = dict(metrics)
 
-    for chaos_type in active:
+    for chaos_type, _intensity in active.items():
         if chaos_type == "latency_spike":
-            m["latency_ms"] = m.get("latency_ms", 0) + random.uniform(200, 800)
+            val = _get_effect(node_id, chaos_type)
+            m["latency_ms"] = m.get("latency_ms", 0) + (val or 600)
         elif chaos_type == "cpu_spike":
-            config = _get_config(node_id, chaos_type)
-            bonus = float(config.get("value", 30)) if config else 30.0
-            m["cpu"] = min(100.0, m.get("cpu", 0) + bonus)
+            target = _get_effect(node_id, chaos_type)
+            m["cpu"] = max(m.get("cpu", 0), target or 90)
         elif chaos_type == "packet_loss":
+            val = _get_effect(node_id, chaos_type)
             _loss_counter[node_id] = _loss_counter.get(node_id, 0) + 1
-            if _loss_counter[node_id] % 5 == 0:
+            n = int(val) if val else 4
+            if _loss_counter[node_id] % n == 0:
                 return None
 
     _recompute_status(m)
@@ -74,6 +107,10 @@ async def inject(
     if chaos_type not in ALL_TYPES:
         raise ValueError(f"Unknown chaos type: {chaos_type}")
 
+    intensity = (config or {}).get("intensity", DEFAULT_INTENSITY)
+    if chaos_type in OVERLAY_TYPES and intensity not in INTENSITIES:
+        raise ValueError(f"Unknown intensity: {intensity}")
+
     event_id = str(uuid.uuid4())
     now = _utcnow()
 
@@ -93,11 +130,17 @@ async def inject(
             },
         )
 
-    # Alert-only types are one-shot — don't persist in overlay registry
     if chaos_type in OVERLAY_TYPES:
-        _active.setdefault(node_id, []).append(chaos_type)
-        if config:
-            _config_cache[f"{node_id}:{chaos_type}"] = config
+        _active.setdefault(node_id, {})[chaos_type] = intensity
+        # Generate a realistic random value within the intensity range and store it.
+        # This simulates real operational variance: a "high CPU" incident could
+        # spike anywhere from 75-95%, not a fixed 92%.
+        if chaos_type == "cpu_spike":
+            _set_effect(node_id, chaos_type, _random_in_range(intensity, _CPU_RANGES))
+        elif chaos_type == "latency_spike":
+            _set_effect(node_id, chaos_type, _random_in_range(intensity, _LATENCY_RANGES))
+        elif chaos_type == "packet_loss":
+            _set_effect(node_id, chaos_type, _random_in_range(intensity, _LOSS_RANGES))
         await manager.broadcast(
             json.dumps(
                 {
@@ -112,23 +155,42 @@ async def inject(
     return event_id
 
 
-async def recover_all(node_id: str | None = None) -> int:
+async def recover_all(node_id: str | None = None, chaos_type: str | None = None) -> int:
+    from services import alerting as alerting_svc
+
     now = _utcnow()
     removed = 0
 
     nodes = [node_id] if node_id else list(_active.keys())
     for nid in nodes:
-        types = _active.pop(nid, [])
-        for ct in types:
-            _config_cache.pop(f"{nid}:{ct}", None)
-        removed += len(types)
-        _loss_counter.pop(nid, None)
+        if chaos_type:
+            popped = _active.get(nid, {}).pop(chaos_type, None)
+            if popped:
+                removed += 1
+                _clear_effect(nid, chaos_type)
+                if not _active.get(nid):  # no more active chaos for this node
+                    _active.pop(nid, None)
+                    _loss_counter.pop(nid, None)
+        else:
+            types = _active.pop(nid, {})
+            removed += len(types)
+            for ct in types:
+                _clear_effect(nid, ct)
+            _loss_counter.pop(nid, None)
 
     if removed == 0:
         return 0
 
     async with engine.begin() as conn:
-        if node_id:
+        if chaos_type and node_id:
+            await conn.execute(
+                text(
+                    "UPDATE chaos_events SET ended_at = :now "
+                    "WHERE node_id = :node_id AND chaos_type = :chaos_type AND ended_at IS NULL"
+                ),
+                {"now": now, "node_id": node_id, "chaos_type": chaos_type},
+            )
+        elif node_id:
             await conn.execute(
                 text(
                     "UPDATE chaos_events SET ended_at = :now "
@@ -146,28 +208,32 @@ async def recover_all(node_id: str | None = None) -> int:
             )
 
     for nid in nodes:
-        await manager.broadcast(
-            json.dumps(
-                {
-                    "type": "node_status_changed",
-                    "node_id": nid,
-                    "status": "green",
-                    "timestamp": now.isoformat(),
-                }
+        still_active = _active.get(nid, {})
+        if not still_active:
+            await manager.broadcast(
+                json.dumps(
+                    {
+                        "type": "node_status_changed",
+                        "node_id": nid,
+                        "status": "green",
+                        "timestamp": now.isoformat(),
+                    }
+                )
             )
-        )
+            # Resolve any open incident for fully recovered nodes
+            await alerting_svc.resolve_for_node(nid, now)
 
     return removed
 
 
 def status() -> dict:
-    return {"active": dict(_active), "loss_counter": dict(_loss_counter)}
+    return {
+        "active": dict(_active),
+        "loss_counter": dict(_loss_counter),
+        "effect_values": {f"{k[0]}:{k[1]}": v for k, v in _effect_values.items()},
+    }
 
 
-# ── config helpers ──────────────────────────────────────────────────
-
-_config_cache: dict[str, dict] = {}  # event_id → config
-
-
-def _get_config(node_id: str, chaos_type: str) -> dict | None:
-    return _config_cache.get(f"{node_id}:{chaos_type}")
+def active_for_node(node_id: str) -> bool:
+    """Returns True if any overlay chaos is active for the node."""
+    return node_id in _active and len(_active[node_id]) > 0

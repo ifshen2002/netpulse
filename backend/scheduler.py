@@ -11,7 +11,7 @@ from services.alerting import evaluate as evaluate_alerts, check_heartbeats
 from services.chaos import apply_overlay
 from services.monitoring import collect as collect_node1
 from services.normalization import normalize
-from services.simulator import any_burst, generate as generate_synthetic
+from services.simulator import get_burst_interval, generate as generate_synthetic
 
 scheduler = AsyncIOScheduler()
 _started = False
@@ -44,7 +44,8 @@ async def _collect_all_nodes() -> None:
                 text(
                     "INSERT INTO metrics (node_id, timestamp, cpu, memory, disk, "
                     "latency_ms, packet_loss_pct, status) "
-                    "VALUES (:node_id, :ts, :cpu, :memory, :disk, :latency_ms, :packet_loss_pct, :status)"
+                    "VALUES (:node_id, :ts, :cpu, :memory, :disk, "
+                    ":latency_ms, :packet_loss_pct, :status)"
                 ),
                 {
                     "node_id": m["node_id"],
@@ -126,7 +127,8 @@ def stop_scheduler() -> None:
 def sync_burst_interval() -> None:
     if not scheduler.running:
         return
-    if any_burst():
-        scheduler.reschedule_job("collect_metrics", trigger="interval", seconds=1)
+    interval = get_burst_interval()
+    if interval > 0:
+        scheduler.reschedule_job("collect_metrics", trigger="interval", seconds=interval)
     else:
         scheduler.reschedule_job("collect_metrics", trigger="interval", seconds=5)

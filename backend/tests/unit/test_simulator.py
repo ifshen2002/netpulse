@@ -5,7 +5,10 @@ def test_generate_returns_all_fields():
     for node_id in SYNTHETIC_NODES:
         m = generate(node_id)
         assert m is not None
-        assert set(m.keys()) == {"node_id", "timestamp", "cpu", "memory", "disk", "latency_ms", "packet_loss_pct", "status"}
+        assert set(m.keys()) == {  # noqa: E501
+            "node_id", "timestamp", "cpu", "memory", "disk",
+            "latency_ms", "packet_loss_pct", "status",
+        }
 
 
 def test_generate_values_in_bounds():

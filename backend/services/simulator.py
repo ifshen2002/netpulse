@@ -7,11 +7,17 @@ SYNTHETIC_NODES = {
 }
 
 _on: dict[str, bool] = {"node-2": True, "node-3": True}
-_burst: dict[str, bool] = {"node-2": False, "node-3": False}
+_burst: dict[str, int] = {"node-2": 0, "node-3": 0}  # interval seconds, 0 = off
 
 _state: dict[str, dict] = {
-    "node-2": {"cpu": 35.0, "memory": 55.0, "disk": 35.0, "latency_ms": 20.0, "packet_loss_pct": 0.5},
-    "node-3": {"cpu": 25.0, "memory": 45.0, "disk": 30.0, "latency_ms": 15.0, "packet_loss_pct": 0.3},
+    "node-2": {
+        "cpu": 35.0, "memory": 55.0, "disk": 35.0,
+        "latency_ms": 20.0, "packet_loss_pct": 0.5,
+    },
+    "node-3": {
+        "cpu": 25.0, "memory": 45.0, "disk": 30.0,
+        "latency_ms": 15.0, "packet_loss_pct": 0.3,
+    },
 }
 
 
@@ -50,16 +56,25 @@ def set_node_on(node_id: str, on: bool) -> None:
         _on[node_id] = on
 
 
-def set_burst(node_id: str, burst: bool) -> None:
+def set_burst(node_id: str, interval: int) -> None:
+    """interval: burst collection interval in seconds, 0 = off"""
     if node_id in SYNTHETIC_NODES:
-        _burst[node_id] = burst
+        _burst[node_id] = interval
 
 
 def is_on(node_id: str) -> bool:
     return _on.get(node_id, False)
 
 
+def get_burst_interval(node_id: str | None = None) -> int:
+    """Returns the fastest burst interval (seconds), or 0 if none active."""
+    if node_id:
+        return _burst.get(node_id, 0)
+    active = [v for v in _burst.values() if v > 0]
+    return min(active) if active else 0
+
+
 def any_burst(node_id: str | None = None) -> bool:
     if node_id:
-        return _burst.get(node_id, False)
-    return any(_burst.values())
+        return _burst.get(node_id, 0) > 0
+    return any(v > 0 for v in _burst.values())

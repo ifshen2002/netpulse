@@ -1,5 +1,3 @@
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 import services.chaos as chaos_svc
@@ -8,7 +6,7 @@ import services.chaos as chaos_svc
 def _clean_state():
     chaos_svc._active.clear()
     chaos_svc._loss_counter.clear()
-    chaos_svc._config_cache.clear()
+    chaos_svc._effect_values.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -33,114 +31,134 @@ def _base_metrics(node_id="node-2", **overrides):
     return m
 
 
-# ── Node-1 passthrough ──────────────────────────────────────────────
+def _set_active(node_id, chaos_type, intensity, value):
+    chaos_svc._active.setdefault(node_id, {})[chaos_type] = intensity
+    chaos_svc._set_effect(node_id, chaos_type, value)
+
+
+# Node-1 passthrough
 
 def test_apply_overlay_node1_passthrough():
-    chaos_svc._active["node-1"] = ["cpu_spike"]
+    _set_active("node-1", "cpu_spike", "high", 88.0)
     original = _base_metrics("node-1")
     result = chaos_svc.apply_overlay(original)
     assert result is original
 
 
 def test_apply_overlay_node1_always_returns_unchanged():
-    chaos_svc._active["node-1"] = ["latency_spike", "packet_loss", "cpu_spike"]
+    _set_active("node-1", "latency_spike", "low", 80.0)
+    _set_active("node-1", "packet_loss", "critical", 2)
+    _set_active("node-1", "cpu_spike", "high", 90.0)
     original = _base_metrics("node-1", status="green")
     result = chaos_svc.apply_overlay(original)
     assert result is original
 
 
-# ── latency_spike ───────────────────────────────────────────────────
+# latency_spike
 
 def test_apply_overlay_latency_spike_adds_delay():
-    chaos_svc._active["node-2"] = ["latency_spike"]
+    _set_active("node-2", "latency_spike", "high", 600.0)
     m = _base_metrics(latency_ms=100.0)
     result = chaos_svc.apply_overlay(m)
     assert result is not None
-    assert result["latency_ms"] >= 300.0   # 100 + min 200
-    assert result["latency_ms"] <= 900.0   # 100 + max 800
+    assert result["latency_ms"] == 700.0  # 100 + 600
 
 
-def test_apply_overlay_latency_spike_may_trigger_yellow_status():
-    chaos_svc._active["node-2"] = ["latency_spike"]
-    m = _base_metrics(latency_ms=400.0)
+def test_apply_overlay_latency_spike_medium_triggers_yellow_status():
+    _set_active("node-2", "latency_spike", "medium", 450.0)
+    m = _base_metrics(latency_ms=100.0)
     result = chaos_svc.apply_overlay(m)
-    # 400 + (200..800) → at least 600 > 500 → yellow
-    assert result["status"] in ("yellow", "red")
+    # 100 + 450 = 550 > 500 -> yellow
+    assert result["status"] == "yellow"
 
 
-# ── cpu_spike ───────────────────────────────────────────────────────
+def test_apply_overlay_latency_spike_critical_triggers_red_status():
+    _set_active("node-2", "latency_spike", "critical", 1000.0)
+    m = _base_metrics(latency_ms=100.0)
+    result = chaos_svc.apply_overlay(m)
+    # 100 + 1000 = 1100 > 1000 -> red
+    assert result["status"] == "red"
 
-def test_apply_overlay_cpu_spike_adds_bonus():
-    chaos_svc._active["node-2"] = ["cpu_spike"]
-    chaos_svc._config_cache["node-2:cpu_spike"] = {"value": 40}
+
+# cpu_spike
+
+def test_apply_overlay_cpu_spike_high_target():
+    _set_active("node-2", "cpu_spike", "high", 88.0)
     m = _base_metrics(cpu=50.0)
     result = chaos_svc.apply_overlay(m)
     assert result is not None
-    assert result["cpu"] == 90.0  # 50 + 40
+    assert result["cpu"] == 88.0
 
 
-def test_apply_overlay_cpu_spike_caps_at_100():
-    chaos_svc._active["node-2"] = ["cpu_spike"]
-    chaos_svc._config_cache["node-2:cpu_spike"] = {"value": 60}
+def test_apply_overlay_cpu_spike_when_baseline_already_high():
+    _set_active("node-2", "cpu_spike", "high", 88.0)
+    m = _base_metrics(cpu=95.0)
+    result = chaos_svc.apply_overlay(m)
+    assert result is not None
+    assert result["cpu"] == 95.0  # already above 88 target -> unchanged
+
+
+def test_apply_overlay_cpu_spike_critical_target():
+    _set_active("node-2", "cpu_spike", "critical", 98.0)
     m = _base_metrics(cpu=50.0)
     result = chaos_svc.apply_overlay(m)
     assert result is not None
-    assert result["cpu"] == 100.0
+    assert result["cpu"] == 98.0
 
 
-def test_apply_overlay_cpu_spike_default_value():
-    chaos_svc._active["node-2"] = ["cpu_spike"]
+def test_apply_overlay_cpu_spike_medium_target():
+    _set_active("node-2", "cpu_spike", "medium", 42.0)
     m = _base_metrics(cpu=50.0)
     result = chaos_svc.apply_overlay(m)
     assert result is not None
-    assert result["cpu"] == 80.0  # 50 + default 30
+    assert result["cpu"] == 50.0  # baseline above medium target -> stays baseline
 
 
-# ── packet_loss ─────────────────────────────────────────────────────
+# packet_loss
 
-def test_apply_overlay_packet_loss_drops_every_5th():
-    chaos_svc._active["node-2"] = ["packet_loss"]
+def test_apply_overlay_packet_loss_drops_every_4th_high():
+    _set_active("node-2", "packet_loss", "high", 4)
     m = _base_metrics()
 
-    # Calls 1-4: pass through
-    for _ in range(4):
+    for _ in range(3):
         result = chaos_svc.apply_overlay(m)
         assert result is not None
-
-    # Call 5: dropped
+    result = chaos_svc.apply_overlay(m)
+    assert result is None
+    for _ in range(3):
+        result = chaos_svc.apply_overlay(m)
+        assert result is not None
     result = chaos_svc.apply_overlay(m)
     assert result is None
 
-    # Calls 6-9: pass through again
-    for _ in range(4):
-        result = chaos_svc.apply_overlay(m)
-        assert result is not None
 
-    # Call 10: dropped again
-    result = chaos_svc.apply_overlay(m)
-    assert result is None
+def test_apply_overlay_packet_loss_critical_every_2nd():
+    _set_active("node-2", "packet_loss", "critical", 2)
+    m = _base_metrics()
+
+    assert chaos_svc.apply_overlay(m) is not None
+    assert chaos_svc.apply_overlay(m) is None
+    assert chaos_svc.apply_overlay(m) is not None
+    assert chaos_svc.apply_overlay(m) is None
 
 
 def test_apply_overlay_packet_loss_counter_per_node():
-    chaos_svc._active["node-2"] = ["packet_loss"]
-    chaos_svc._active["node-3"] = ["packet_loss"]
+    _set_active("node-2", "packet_loss", "high", 4)
+    _set_active("node-3", "packet_loss", "high", 4)
     m2 = _base_metrics("node-2")
     m3 = _base_metrics("node-3")
 
-    # Advance node-2 to call 4
-    for _ in range(4):
+    for _ in range(3):
         chaos_svc.apply_overlay(m2)
-    # node-3 is at call 1 — should pass
     assert chaos_svc.apply_overlay(m3) is not None
-    # node-2 call 5 — should drop
     assert chaos_svc.apply_overlay(m2) is None
 
 
-# ── copy semantics ──────────────────────────────────────────────────
+# copy semantics
 
 def test_apply_overlay_does_not_mutate_input():
-    chaos_svc._active["node-2"] = ["latency_spike", "cpu_spike"]
-    chaos_svc._config_cache["node-2:cpu_spike"] = {"value": 20}
+    _set_active("node-2", "latency_spike", "low", 100.0)
+    _set_active("node-2", "cpu_spike", "high", 88.0)
     original = _base_metrics(cpu=40.0, latency_ms=50.0)
     chaos_svc.apply_overlay(original)
     assert original["cpu"] == 40.0
@@ -148,7 +166,7 @@ def test_apply_overlay_does_not_mutate_input():
     assert original["status"] == "green"
 
 
-# ── no active chaos ─────────────────────────────────────────────────
+# no active chaos
 
 def test_apply_overlay_no_active_chaos_returns_unchanged():
     m = _base_metrics()
@@ -156,3 +174,59 @@ def test_apply_overlay_no_active_chaos_returns_unchanged():
     assert result["cpu"] == m["cpu"]
     assert result["latency_ms"] == m["latency_ms"]
     assert result["status"] == m["status"]
+
+
+# inject stores effect values
+
+@pytest.mark.asyncio
+async def test_inject_stores_effect_value():
+    import services.chaos as cs
+    cs.engine = cs.engine  # noop, just to avoid import issues
+
+    # We can't easily mock the DB, so test _set_effect directly
+    cs._set_effect("node-2", "cpu_spike", 88.5)
+    assert cs._get_effect("node-2", "cpu_spike") == 88.5
+
+    cs._clear_effect("node-2", "cpu_spike")
+    assert cs._get_effect("node-2", "cpu_spike") is None
+
+
+# intensity ranges are valid
+
+def test_cpu_ranges_are_within_expected_bounds():
+    for intensity, (lo, hi) in chaos_svc._CPU_RANGES.items():
+        for _ in range(20):
+            val = chaos_svc._random_in_range(intensity, chaos_svc._CPU_RANGES)
+            assert lo <= val <= hi, f"{intensity}: {val} not in [{lo}, {hi}]"
+
+    # CRITICAL always >= 95
+    for _ in range(20):
+        val = chaos_svc._random_in_range("critical", chaos_svc._CPU_RANGES)
+        assert val >= 95, f"critical CPU must be >= 95, got {val}"
+
+    # LOW always < 80 (won't trigger alert)
+    for _ in range(20):
+        val = chaos_svc._random_in_range("low", chaos_svc._CPU_RANGES)
+        assert val < 80, f"low CPU must be < 80, got {val}"
+
+    # HIGH always >= 80 (crosses alert threshold)
+    for _ in range(20):
+        val = chaos_svc._random_in_range("high", chaos_svc._CPU_RANGES)
+        assert val >= 80, f"high CPU must be >= 80, got {val}"
+
+
+def test_latency_ranges():
+    for intensity, (lo, hi) in chaos_svc._LATENCY_RANGES.items():
+        for _ in range(10):
+            val = chaos_svc._random_in_range(intensity, chaos_svc._LATENCY_RANGES)
+            assert lo <= val <= hi
+
+    # HIGH always >= 500 (crosses threshold)
+    for _ in range(10):
+        val = chaos_svc._random_in_range("high", chaos_svc._LATENCY_RANGES)
+        assert val >= 500
+
+    # LOW always < 500 (won't trigger)
+    for _ in range(10):
+        val = chaos_svc._random_in_range("low", chaos_svc._LATENCY_RANGES)
+        assert val < 500

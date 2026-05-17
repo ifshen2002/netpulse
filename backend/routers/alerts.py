@@ -19,7 +19,10 @@ async def list_alerts(
         params["node_id"] = node_id
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = f"SELECT id, node_id, incident_id, alert_type, message, fired_at, resolved_at FROM alerts {where} ORDER BY fired_at DESC LIMIT :limit"
+    sql = (
+        f"SELECT id, node_id, incident_id, alert_type, message, fired_at, resolved_at "
+        f"FROM alerts {where} ORDER BY fired_at DESC LIMIT :limit"
+    )
 
     async with engine.connect() as conn:
         result = await conn.execute(text(sql), params)

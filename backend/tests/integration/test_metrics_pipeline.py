@@ -95,7 +95,11 @@ async def test_retention_deletes_old_keeps_recent(client):
         assert kept is not None, "Recent metric should survive retention cleanup"
 
         result = await conn.execute(
-            text("SELECT count(*) FROM metrics WHERE node_id = 'node-1' AND timestamp < NOW() - INTERVAL '72 hours'")
+            text(
+                "SELECT count(*) FROM metrics "
+                "WHERE node_id = 'node-1' "
+                "AND timestamp < NOW() - INTERVAL '72 hours'"
+            )
         )
         old = result.scalar()
         assert old == 0, "Old metrics should be deleted"
@@ -114,7 +118,10 @@ async def test_db_write_then_read(client):
 
     async with engine.connect() as conn:
         result = await conn.execute(
-            text("SELECT cpu, memory FROM metrics WHERE node_id = 'node-2' ORDER BY id DESC LIMIT 1")
+            text(
+                "SELECT cpu, memory FROM metrics "
+                "WHERE node_id = 'node-2' ORDER BY id DESC LIMIT 1"
+            )
         )
         row = result.first()
         assert row is not None

@@ -15,13 +15,11 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from main import app
-from redis_client import client as redis
 from services.alerting import (
     _clean_streaks,
     _cooldowns,
     _heartbeats,
     _open_incidents,
-    evaluate as evaluate_node,
 )
 
 
@@ -61,12 +59,10 @@ def reset_everything():
     import services.chaos as chaos_svc
     chaos_svc._active.clear()
     chaos_svc._loss_counter.clear()
-    chaos_svc._config_cache.clear()
     yield
     _reset()
     chaos_svc._active.clear()
     chaos_svc._loss_counter.clear()
-    chaos_svc._config_cache.clear()
 
 
 @pytest.mark.asyncio
@@ -84,10 +80,10 @@ async def test_demo_flow_full_cycle(client):
     assert status_data["success"] is True
     assert status_data["data"]["active"] == {}
 
-    # ═══ Phase 2: Inject chaos ════════════════════════════════════════
+    # ═══ Phase 2: Inject chaos (force-evaluates immediately) ════════════
     resp = await client.post(
         "/api/chaos/inject",
-        json={"node_id": "node-2", "chaos_type": "cpu_spike", "config": {"value": 50}},
+        json={"node_id": "node-2", "chaos_type": "cpu_spike", "config": {"intensity": "high"}},
     )
     assert resp.status_code == 200
     inject_data = resp.json()
@@ -98,22 +94,18 @@ async def test_demo_flow_full_cycle(client):
     # Verify chaos appears in status
     resp = await client.get("/api/chaos/status")
     status_data = resp.json()
-    assert "cpu_spike" in status_data["data"]["active"].get("node-2", [])
+    assert "cpu_spike" in status_data["data"]["active"].get("node-2", {})
 
-    # ═══ Phase 3: Trigger alert with high CPU ═════════════════════════
-    await redis.set("metrics:latest:node-2", _metrics_json(cpu=92.0))
-    fired = await evaluate_node("node-2")
-    assert len(fired) == 1
-    assert fired[0]["alert_type"] == "cpu_high"
-
-    # Verify alert visible via API
+    # ═══ Phase 3: Alert already fired by force-evaluation ═══════════════
+    # The API inject endpoint now force-evaluates immediately, so the alert
+    # and incident are already created. Verify via API.
     resp = await client.get("/api/alerts?node_id=node-2&limit=5")
     alert_data = resp.json()
     assert alert_data["success"] is True
-    assert len(alert_data["data"]) >= 1
-    assert alert_data["data"][0]["alert_type"] == "cpu_high"
+    cpu_alerts = [a for a in alert_data["data"] if a["alert_type"] == "cpu_high"]
+    assert len(cpu_alerts) >= 1, "cpu_high alert must fire during inject force-eval"
 
-    # ═══ Phase 4: Verify incident opened ══════════════════════════════
+    # ═══ Phase 4: Verify incident opened ═════════════════════════════════
     resp = await client.get("/api/incidents?status=open&limit=5")
     incident_data = resp.json()
     assert incident_data["success"] is True
@@ -121,7 +113,7 @@ async def test_demo_flow_full_cycle(client):
     incident_id = incident_data["data"][0]["id"]
     assert incident_data["data"][0]["status"] == "open"
 
-    # ═══ Phase 5: Recover ═════════════════════════════════════════════
+    # ═══ Phase 5: Recover — incident closes immediately ═════════════════
     resp = await client.post("/api/chaos/recover", json={"node_id": "node-2"})
     recover_data = resp.json()
     assert recover_data["success"] is True
@@ -129,19 +121,15 @@ async def test_demo_flow_full_cycle(client):
 
     resp = await client.get("/api/chaos/status")
     status_data = resp.json()
-    assert status_data["data"]["active"].get("node-2", []) == []
+    assert status_data["data"]["active"].get("node-2", {}) == {}
 
-    # ═══ Phase 6: Close incident (3 clean evaluations) ════════════════
-    for _ in range(3):
-        await redis.set("metrics:latest:node-2", _metrics_json())
-        await evaluate_node("node-2")
-
+    # Incident is closed immediately by recover → resolve_for_node
     resp = await client.get(f"/api/incidents/{incident_id}")
     detail = resp.json()
     assert detail["success"] is True
     assert detail["data"]["status"] == "closed"
     assert detail["data"]["closed_at"] is not None
 
-    # ═══ Phase 7: Verify alerts linked to incident ════════════════════
+    # ═══ Phase 6: Verify alerts linked to incident ═══════════════════════
     assert len(detail["data"]["alerts"]) >= 1
     assert detail["data"]["alerts"][0]["alert_type"] == "cpu_high"

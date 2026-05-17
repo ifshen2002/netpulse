@@ -1,0 +1,229 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # ── Lint ─────────────────────────────────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install flake8
+        run: pip install flake8
+
+      - name: Lint backend
+        working-directory: backend
+        run: |
+          flake8 . \
+            --max-line-length=100 \
+            --extend-exclude=alembic/versions \
+            --count \
+            --statistics
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+
+  # ── Unit Tests ───────────────────────────────────────────────────────
+  unit-tests:
+    needs: [lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        working-directory: backend
+        run: pytest tests/unit/ -v --no-cov
+
+  # ── Frontend Build ───────────────────────────────────────────────────
+  frontend-build:
+    needs: [lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  # ── Integration Tests (ASGITransport, no HTTP server) ────────────────
+  integration-tests:
+    needs: [lint]
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: netpulse
+          POSTGRES_PASSWORD: netpulse
+          POSTGRES_DB: netpulse
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse
+        run: alembic upgrade head
+
+      - name: Run integration tests
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse
+          REDIS_URL: redis://localhost:6379/0
+          NETPULSE_TESTING: "1"
+        run: pytest tests/integration/ -v --cov-report=xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            backend/htmlcov/
+            backend/coverage.xml
+
+  # ── Live-Server Tests (websocket + e2e against running uvicorn) ──────
+  live-server-tests:
+    needs: [integration-tests]
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: netpulse
+          POSTGRES_PASSWORD: netpulse
+          POSTGRES_DB: netpulse
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse
+        run: alembic upgrade head
+
+      - name: Start server
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          uvicorn main:app --host 0.0.0.0 --port 8000 &
+          echo $! > /tmp/uvicorn.pid
+          for i in $(seq 1 30); do
+            curl -s http://localhost:8000/api/health && break
+            sleep 1
+          done
+          curl -s http://localhost:8000/api/health || exit 1
+
+      - name: Run websocket tests
+        working-directory: backend
+        run: pytest tests/websocket/ -v --no-cov
+
+      - name: Run e2e tests
+        working-directory: backend
+        run: pytest tests/e2e/ -v --no-cov
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f /tmp/uvicorn.pid ]; then
+            kill $(cat /tmp/uvicorn.pid) 2>/dev/null || true
+          fi
+
+  # ── Docker Verification ──────────────────────────────────────────────
+  docker-verify:
+    needs: [unit-tests, integration-tests, live-server-tests, frontend-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose config
+        run: docker compose config
+
+      - name: Build backend image
+        run: docker build ./backend

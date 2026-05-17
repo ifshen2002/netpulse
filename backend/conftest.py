@@ -3,11 +3,11 @@ import os
 
 os.environ["NETPULSE_TESTING"] = "1"
 
-import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
 
-from main import app
+from main import app  # noqa: E402
 
 
 @pytest.fixture(scope="session")

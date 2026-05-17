@@ -19,7 +19,10 @@ async def list_incidents(
         params["status"] = status
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = f"SELECT id, title, status, opened_at, closed_at FROM incidents {where} ORDER BY opened_at DESC LIMIT :limit"
+    sql = (
+        f"SELECT id, title, status, opened_at, closed_at "
+        f"FROM incidents {where} ORDER BY opened_at DESC LIMIT :limit"
+    )
 
     async with engine.connect() as conn:
         result = await conn.execute(text(sql), params)
