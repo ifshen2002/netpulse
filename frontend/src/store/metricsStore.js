@@ -142,6 +142,11 @@ const useMetricsStore = create((set) => ({
 
   incrementChaosCount: () => set((state) => ({ chaosCount: state.chaosCount + 1 })),
 
+  // ── stress test placeholder ────────────────────────────────────
+  stressCount: 0,
+
+  incrementStressCount: () => set((state) => ({ stressCount: state.stressCount + 1 })),
+
   setChaosState: (active, burst) => set({ chaosActive: active, burstNodes: burst }),
 
   // ── node visibility ──────────────────────────────────────────
@@ -174,6 +179,51 @@ const useMetricsStore = create((set) => ({
     } catch {
       // backend may not be ready on first load
     }
+  },
+
+  fetchInitialMetrics: async () => {
+    const nodeIds = ['node-1', 'node-2', 'node-3']
+    const results = await Promise.allSettled(
+      nodeIds.map(async (nid) => {
+        const resp = await fetch(`/api/metrics/${nid}?limit=60`)
+        const json = await resp.json()
+        return { nodeId: nid, data: json.data || [] }
+      }),
+    )
+    set((state) => {
+      const nextMetrics = { ...state.metrics }
+      const nextHistory = { ...state.history }
+      for (const r of results) {
+        if (r.status !== 'fulfilled' || !r.value.data.length) continue
+        const { nodeId, data } = r.value
+        // data is newest-first from API; reverse to oldest-first for history
+        const points = data.reverse().map((d) => ({
+          timestamp: d.timestamp,
+          cpu: d.cpu,
+          memory: d.memory,
+          latency_ms: d.latency_ms,
+        }))
+        // Only set if WebSocket hasn't already populated more data
+        const existing = state.history[nodeId]
+        if (!existing || existing.length < points.length) {
+          nextHistory[nodeId] = points.slice(-MAX_HISTORY)
+        }
+        // Only set latest snapshot if WebSocket hasn't already set one
+        if (!state.metrics[nodeId]) {
+          const latest = data[data.length - 1]
+          nextMetrics[nodeId] = {
+            cpu: latest.cpu,
+            memory: latest.memory,
+            disk: latest.disk,
+            latency_ms: latest.latency_ms,
+            packet_loss_pct: latest.packet_loss_pct,
+            status: latest.status,
+            timestamp: latest.timestamp,
+          }
+        }
+      }
+      return { metrics: nextMetrics, history: nextHistory }
+    })
   },
 }))
 

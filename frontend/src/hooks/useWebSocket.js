@@ -23,6 +23,7 @@ export default function useWebSocket() {
         retries.current = 0
         store.getState().setConnected(true)
         store.getState().fetchChaosStatus()
+        store.getState().fetchInitialMetrics()
       }
 
       ws.onmessage = (msg) => {

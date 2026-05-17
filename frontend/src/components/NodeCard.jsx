@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import useMetricsStore, { EMPTY_ARR } from '../store/metricsStore'
 
 const STATUS_COLORS = {
@@ -12,6 +13,8 @@ const NODE_LABELS = {
   'node-2': 'Cloud Service A',
   'node-3': 'Cloud Service B',
 }
+
+const STRESS_INTENSITIES = ['low', 'medium', 'high', 'critical']
 
 function Sparkline({ values }) {
   if (!values || values.length === 0) return null
@@ -33,6 +36,53 @@ function Sparkline({ values }) {
   )
 }
 
+function StressTrigger({ nodeId }) {
+  const [intensity, setIntensity] = useState('high')
+  const [fired, setFired] = useState(false)
+  const incrementStress = useMetricsStore((s) => s.incrementStressCount)
+
+  if (nodeId === 'node-1') return null
+
+  const handleFire = () => {
+    setFired(true)
+    incrementStress()
+    setTimeout(() => setFired(false), 1500)
+  }
+
+  return (
+    <div className="mt-3 pt-2 flex items-center gap-1.5" style={{ borderTop: '1px solid var(--border)' }}>
+      <select
+        value={intensity}
+        onChange={(e) => setIntensity(e.target.value)}
+        className="text-xs rounded px-1 py-0.5"
+        style={{
+          background: 'var(--bg)',
+          color: 'var(--text)',
+          border: '1px solid var(--border)',
+          fontSize: 10,
+        }}
+      >
+        {STRESS_INTENSITIES.map((v) => (
+          <option key={v} value={v}>{v}</option>
+        ))}
+      </select>
+      <button
+        onClick={handleFire}
+        className="rounded px-2 py-0.5 text-xs font-semibold transition-colors"
+        style={{
+          background: fired ? 'var(--red)' : 'var(--accent-bg)',
+          border: `1px solid ${fired ? 'var(--red)' : 'var(--accent)'}`,
+          color: fired ? '#fff' : 'var(--accent)',
+          cursor: 'pointer',
+          fontSize: 10,
+        }}
+      >
+        {fired ? 'Fired!' : 'Stress'}
+      </button>
+    </div>
+  )
+}
+
 export default function NodeCard({ nodeId }) {
   const data = useMetricsStore((s) => s.metrics[nodeId])
   const history = useMetricsStore((s) => s.history[nodeId] || EMPTY_ARR)
@@ -46,6 +96,7 @@ export default function NodeCard({ nodeId }) {
         </div>
         <p className="text-xs" style={{ color: 'var(--gray)' }}>{NODE_LABELS[nodeId]}</p>
         <p className="text-xs mt-2" style={{ color: 'var(--gray)' }}>No data</p>
+        <StressTrigger nodeId={nodeId} />
       </div>
     )
   }
@@ -85,6 +136,7 @@ export default function NodeCard({ nodeId }) {
         <p className="text-xs mb-1" style={{ color: 'var(--gray)' }}>CPU trend</p>
         <Sparkline values={cpuVals} />
       </div>
+      <StressTrigger nodeId={nodeId} />
     </div>
   )
 }
