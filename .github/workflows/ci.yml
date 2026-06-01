@@ -267,7 +267,7 @@ jobs:
         run: docker build -t netpulse-backend ./backend
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: netpulse-backend
           format: table
