@@ -4,9 +4,12 @@ import json
 import pytest
 import websockets
 
-_VALID_TYPES = {  # noqa: E501
+_VALID_TYPES = {
+    # V1
     "metric_update", "alert_fired", "incident_opened",
     "incident_closed", "node_status_changed",
+    # V2
+    "probe_metric_update", "packet_evidence", "link_status_changed",
 }
 
 
