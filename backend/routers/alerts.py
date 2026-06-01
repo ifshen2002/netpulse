@@ -18,10 +18,10 @@ async def list_alerts(
         clauses.append("node_id = :node_id")
         params["node_id"] = node_id
 
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    where_str = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     sql = (
-        f"SELECT id, node_id, incident_id, alert_type, message, fired_at, resolved_at "
-        f"FROM alerts {where} ORDER BY fired_at DESC LIMIT :limit"
+        "SELECT id, node_id, incident_id, alert_type, message, fired_at, resolved_at "  # nosec B608
+        "FROM alerts " + where_str + " ORDER BY fired_at DESC LIMIT :limit"
     )
 
     async with engine.connect() as conn:

@@ -8,6 +8,14 @@ import AlertBanner from './components/AlertBanner'
 import IncidentTimeline from './components/IncidentTimeline'
 import ChaosPanel from './components/ChaosPanel'
 import NodeControls from './components/NodeControls'
+import ViewSwitcher from './components/ViewSwitcher'
+import EndpointCard from './components/EndpointCard'
+import CreateEndpointButton from './components/CreateEndpointButton'
+import ProbeTelemetry from './components/ProbeTelemetry'
+import PacketEvidencePanel from './components/PacketEvidencePanel'
+import NetworkChaosPanel from './components/NetworkChaosPanel'
+import AlertRulesManager from './components/AlertRulesManager'
+import SummaryBar from './components/SummaryBar'
 
 const NODE_IDS = ['node-1', 'node-2', 'node-3']
 
@@ -40,9 +48,126 @@ function NodeToggles() {
   )
 }
 
+function LinkView() {
+  const endpoints = useMetricsStore((s) => s.endpoints)
+  const fetchEndpoints = useMetricsStore((s) => s.fetchEndpoints)
+
+  useEffect(() => {
+    fetchEndpoints()
+  }, [fetchEndpoints])
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Operations Summary */}
+      <SummaryBar />
+
+      {/* Endpoint Cards (unified: shows live probe data + management actions) */}
+      <div className="grid grid-cols-3 gap-3">
+        {endpoints.map((ep) => (
+          <EndpointCard key={ep.id} endpoint={ep} />
+        ))}
+        <CreateEndpointButton />
+      </div>
+
+      {/* Packet Evidence */}
+      <PacketEvidencePanel />
+
+      {/* Probe Telemetry */}
+      <ProbeTelemetry />
+
+      {/* Alert Rules + Network Chaos */}
+      <div className="grid grid-cols-2 gap-3">
+        <AlertRulesManager />
+        <NetworkChaosPanel />
+      </div>
+
+      {/* Shared alert banner */}
+      <div
+        className="rounded mt-1 overflow-hidden"
+        style={{ height: 28, background: 'var(--bg)', border: '1px solid var(--border)' }}
+      >
+        <AlertBanner />
+      </div>
+
+      {/* Shared incidents */}
+      <div
+        className="rounded-lg p-3"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', maxHeight: 180, overflowY: 'auto' }}
+      >
+        <h2>Incidents</h2>
+        <IncidentTimeline />
+      </div>
+
+    </div>
+  )
+}
+
+function NodeView() {
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Panel 1: NodeGrid */}
+      <div className="grid grid-cols-3 gap-3">
+        {NODE_IDS.map((id) => (
+          <NodeCard key={id} nodeId={id} />
+        ))}
+      </div>
+
+      {/* Panel 2: Telemetry (chart + alerts) */}
+      <div
+        className="rounded-lg p-3 flex flex-col gap-2"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+      >
+        <div className="flex items-center justify-between">
+          <h2 style={{ margin: 0 }}>Telemetry</h2>
+          <NodeToggles />
+        </div>
+        <div style={{ height: 220 }}>
+          <ErrorBoundary fallback="Chart unavailable — metrics still live in NodeGrid above">
+            <MetricsChart />
+          </ErrorBoundary>
+        </div>
+        <div
+          className="rounded mt-1 overflow-hidden"
+          style={{ height: 28, background: 'var(--bg)', border: '1px solid var(--border)' }}
+        >
+          <AlertBanner />
+        </div>
+      </div>
+
+      {/* Panel 3: IncidentTimeline */}
+      <div
+        className="rounded-lg p-3"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', maxHeight: 180, overflowY: 'auto' }}
+      >
+        <h2>Incidents</h2>
+        <IncidentTimeline />
+      </div>
+
+      {/* Panel 4: ControlBar (chaos + node controls) */}
+      <div className="grid grid-cols-2 gap-3">
+        <div
+          className="rounded-lg p-3"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+        >
+          <h2>Chaos Injection</h2>
+          <ChaosPanel />
+        </div>
+        <div
+          className="rounded-lg p-3"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+        >
+          <h2>Burst Mode</h2>
+          <NodeControls />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   useWebSocket()
   const connected = useMetricsStore((s) => s.connected)
+  const activeView = useMetricsStore((s) => s.activeView)
   const chaosCount = useMetricsStore((s) => s.chaosCount)
   const incidents = useMetricsStore((s) => s.incidents)
   const openIncidents = incidents.filter((i) => i.status === 'open').length
@@ -53,9 +178,6 @@ export default function App() {
   useEffect(() => {
     if (!connected) {
       disconnectSince.current = Date.now()
-      // Defer the reset via macrotask — avoids synchronous setState in effect.
-      // This is safe because the derived value below (!connected && …) hides
-      // the overlay during the single frame before the macrotask fires.
       const resetTimer = setTimeout(() => setShowDegraded(false), 0)
       const showTimer = setTimeout(() => setShowDegraded(true), 10000)
       return () => {
@@ -72,6 +194,7 @@ export default function App() {
       <div className="flex items-center justify-between mb-2 px-1">
         <h1 style={{ margin: 0, fontSize: 20, letterSpacing: -0.5 }}>NetPulse NOC</h1>
         <div className="flex items-center gap-3 text-xs">
+          <ViewSwitcher />
           {/* operational counters */}
           <div className="flex items-center gap-3" style={{ color: 'var(--gray)' }}>
             <span title="Total chaos injections">
@@ -107,61 +230,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Panel 1: NodeGrid */}
-        <div className="grid grid-cols-3 gap-3">
-          {NODE_IDS.map((id) => (
-            <NodeCard key={id} nodeId={id} />
-          ))}
-        </div>
-
-        {/* Panel 2: Telemetry (chart + alerts) */}
-        <div
-          className="rounded-lg p-3 flex flex-col gap-2"
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
-        >
-          <div className="flex items-center justify-between">
-            <h2 style={{ margin: 0 }}>Telemetry</h2>
-            <NodeToggles />
-          </div>
-          <div style={{ height: 220 }}>
-            <ErrorBoundary fallback="Chart unavailable — metrics still live in NodeGrid above">
-              <MetricsChart />
-            </ErrorBoundary>
-          </div>
-          <div
-            className="rounded mt-1 overflow-hidden"
-            style={{ height: 28, background: 'var(--bg)', border: '1px solid var(--border)' }}
-          >
-            <AlertBanner />
-          </div>
-        </div>
-
-        {/* Panel 3: IncidentTimeline */}
-        <div
-          className="rounded-lg p-3"
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', maxHeight: 180, overflowY: 'auto' }}
-        >
-          <h2>Incidents</h2>
-          <IncidentTimeline />
-        </div>
-
-        {/* Panel 4: ControlBar (chaos + node controls) */}
-        <div className="grid grid-cols-2 gap-3">
-          <div
-            className="rounded-lg p-3"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
-          >
-            <h2>Chaos Injection</h2>
-            <ChaosPanel />
-          </div>
-          <div
-            className="rounded-lg p-3"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
-          >
-            <h2>Burst Mode</h2>
-            <NodeControls />
-          </div>
-        </div>
+        {activeView === 'node' ? <NodeView /> : <LinkView />}
       </div>
     </main>
   )

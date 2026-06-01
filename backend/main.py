@@ -5,11 +5,15 @@ from fastapi import FastAPI
 
 from db import check_db, close_db, engine
 from redis_client import check_redis, close_redis
+from routers.alert_rules import router as alert_rules_router
 from routers.alerts import router as alerts_router
 from routers.chaos import router as chaos_router
+from routers.endpoints import router as endpoints_router
+from routers.netchaos import router as netchaos_router
 from routers.incidents import router as incidents_router
 from routers.metrics import router as metrics_router
 from routers.nodes import router as nodes_router
+from routers.probes import router as probes_router
 from routers.websocket import router as websocket_router
 from scheduler import start_scheduler, stop_scheduler
 
@@ -46,10 +50,14 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(nodes_router)
 app.include_router(metrics_router)
+app.include_router(probes_router)
+app.include_router(endpoints_router)
 app.include_router(websocket_router)
 app.include_router(alerts_router)
+app.include_router(alert_rules_router)
 app.include_router(incidents_router)
 app.include_router(chaos_router)
+app.include_router(netchaos_router)
 
 
 @app.get("/api/health")

@@ -7,8 +7,9 @@ on:
     branches: [main, master]
 
 jobs:
-  # ── Lint ─────────────────────────────────────────────────────────────
+  # ── Code Quality (Lint) ─────────────────────────────────────────────
   lint:
+    name: Code Quality (Lint)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,8 +40,9 @@ jobs:
           npm ci
           npm run lint
 
-  # ── Unit Tests ───────────────────────────────────────────────────────
+  # ── Unit Tests (UT) ─────────────────────────────────────────────────
   unit-tests:
+    name: Unit Tests (UT)
     needs: [lint]
     runs-on: ubuntu-latest
     steps:
@@ -60,6 +62,7 @@ jobs:
 
   # ── Frontend Build ───────────────────────────────────────────────────
   frontend-build:
+    name: Frontend Build
     needs: [lint]
     runs-on: ubuntu-latest
     steps:
@@ -75,8 +78,9 @@ jobs:
           npm ci
           npm run build
 
-  # ── Integration Tests (ASGITransport, no HTTP server) ────────────────
+  # ── Integration Tests (IT) ──────────────────────────────────────────
   integration-tests:
+    name: Integration Tests (IT)
     needs: [lint]
     runs-on: ubuntu-latest
 
@@ -139,8 +143,9 @@ jobs:
             backend/htmlcov/
             backend/coverage.xml
 
-  # ── Live-Server Tests (websocket + e2e against running uvicorn) ──────
-  live-server-tests:
+  # ── Deployment Validation ────────────────────────────────────────────
+  deployment-validation:
+    name: Deployment Validation
     needs: [integration-tests]
     runs-on: ubuntu-latest
 
@@ -215,9 +220,10 @@ jobs:
             kill $(cat /tmp/uvicorn.pid) 2>/dev/null || true
           fi
 
-  # ── Docker Verification ──────────────────────────────────────────────
-  docker-verify:
-    needs: [unit-tests, integration-tests, live-server-tests, frontend-build]
+  # ── Docker Validation ────────────────────────────────────────────────
+  docker-validation:
+    name: Docker Validation
+    needs: [unit-tests, integration-tests, deployment-validation, frontend-build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -227,3 +233,80 @@ jobs:
 
       - name: Build backend image
         run: docker build ./backend
+
+  # ── SAST (Bandit) ────────────────────────────────────────────────────
+  sast:
+    name: SAST (Bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit
+        working-directory: backend
+        run: |
+          bandit -r . \
+            -x alembic/versions,tests \
+            --severity-level medium
+
+  # ── Container Scan (Trivy) ───────────────────────────────────────────
+  container-scan:
+    name: Container Scan (Trivy)
+    needs: [docker-validation]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t netpulse-backend ./backend
+
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: netpulse-backend
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  # ── DAST (OWASP ZAP) ─────────────────────────────────────────────────
+  dast:
+    name: DAST (OWASP ZAP)
+    needs: [container-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start services
+        run: |
+          docker compose up -d postgres redis
+          for i in $(seq 1 30); do
+            docker compose exec postgres pg_isready -U netpulse && break
+            sleep 1
+          done
+          docker compose exec postgres pg_isready -U netpulse || exit 1
+
+      - name: Build and start backend
+        run: |
+          docker compose build backend
+          docker compose up -d backend
+          for i in $(seq 1 30); do
+            curl -s http://localhost:8000/api/health && break
+            sleep 1
+          done
+          curl -s http://localhost:8000/api/health || exit 1
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: http://localhost:8000
+          cmd_options: -I
+
+      - name: Stop services
+        if: always()
+        run: docker compose down -v

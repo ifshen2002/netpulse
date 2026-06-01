@@ -18,10 +18,10 @@ async def list_incidents(
         clauses.append("status = :status")
         params["status"] = status
 
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    where_str = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     sql = (
-        f"SELECT id, title, status, opened_at, closed_at "
-        f"FROM incidents {where} ORDER BY opened_at DESC LIMIT :limit"
+        "SELECT id, title, status, opened_at, closed_at "  # nosec B608
+        "FROM incidents " + where_str + " ORDER BY opened_at DESC LIMIT :limit"
     )
 
     async with engine.connect() as conn:

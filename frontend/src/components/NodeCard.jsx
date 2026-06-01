@@ -14,6 +14,61 @@ const NODE_LABELS = {
   'node-3': 'Cloud Service B',
 }
 
+const TARGET_TYPES = [
+  { value: 'simulated', label: 'Simulated' },
+  { value: 'custom', label: 'Custom IP' },
+]
+
+function TargetSelector({ nodeId }) {
+  const target = useMetricsStore((s) => s.nodeTargets[nodeId] || { type: 'simulated' })
+  const setNodeTarget = useMetricsStore((s) => s.setNodeTarget)
+
+  return (
+    <div className="mt-2 pt-2 flex flex-col gap-1.5" style={{ borderTop: '1px solid var(--border)' }}>
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs" style={{ color: 'var(--gray)' }}>Target:</span>
+        <select
+          value={target.type}
+          onChange={(e) => {
+            const type = e.target.value
+            setNodeTarget(nodeId, type === 'custom' ? { type: 'custom', ip: '' } : { type: 'simulated' })
+          }}
+          className="text-xs rounded px-1 py-0.5"
+          style={{
+            background: 'var(--bg)',
+            color: 'var(--text)',
+            border: '1px solid var(--border)',
+            fontSize: 10,
+            cursor: 'pointer',
+          }}
+        >
+          {TARGET_TYPES.map((t) => (
+            <option key={t.value} value={t.value}>{t.label}</option>
+          ))}
+        </select>
+      </div>
+      {target.type === 'custom' && (
+        <div className="flex items-center gap-1">
+          <input
+            type="text"
+            placeholder="192.168.1.100"
+            value={target.ip || ''}
+            onChange={(e) => setNodeTarget(nodeId, { type: 'custom', ip: e.target.value })}
+            className="text-xs rounded px-1.5 py-0.5 flex-1"
+            style={{
+              background: 'var(--bg)',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              fontSize: 10,
+              minWidth: 0,
+            }}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 const STRESS_INTENSITIES = ['low', 'medium', 'high', 'critical']
 
 function Sparkline({ values }) {
@@ -96,6 +151,7 @@ export default function NodeCard({ nodeId }) {
         </div>
         <p className="text-xs" style={{ color: 'var(--gray)' }}>{NODE_LABELS[nodeId]}</p>
         <p className="text-xs mt-2" style={{ color: 'var(--gray)' }}>No data</p>
+        {nodeId !== 'node-1' && <TargetSelector nodeId={nodeId} />}
         <StressTrigger nodeId={nodeId} />
       </div>
     )
@@ -136,6 +192,7 @@ export default function NodeCard({ nodeId }) {
         <p className="text-xs mb-1" style={{ color: 'var(--gray)' }}>CPU trend</p>
         <Sparkline values={cpuVals} />
       </div>
+      {nodeId !== 'node-1' && <TargetSelector nodeId={nodeId} />}
       <StressTrigger nodeId={nodeId} />
     </div>
   )

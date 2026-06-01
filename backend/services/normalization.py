@@ -42,3 +42,43 @@ def _compute_status(cpu: float, memory: float, latency_ms: float) -> str:
     if cpu > 80 or memory > 90 or latency_ms > 500:
         return "yellow"
     return "green"
+
+
+# ── V2 probe telemetry normalization ────────────────────────
+
+
+def normalize_probe(
+    raw: dict,
+    packet_loss_pct: float,
+    availability_pct: float,
+    has_data: bool,
+) -> dict:
+    latency_ms = _clamp(raw.get("latency_ms", 0), 0, None)
+    loss = _clamp(packet_loss_pct, 0, 100)
+    avail = _clamp(availability_pct, 0, 100)
+
+    return {
+        "probe_id": raw["probe_id"],
+        "link_id": raw.get("link_id", ""),
+        "packet_evidence_id": raw.get("packet_evidence_id", ""),
+        "timestamp": raw.get("timestamp", ""),
+        "latency_ms": _nan_to_zero(latency_ms),
+        "packet_loss_pct": _nan_to_zero(loss),
+        "availability_pct": _nan_to_zero(avail),
+        "status": _compute_probe_status(latency_ms, loss, avail, has_data),
+    }
+
+
+def _compute_probe_status(
+    latency_ms: float,
+    packet_loss_pct: float,
+    availability_pct: float,
+    has_data: bool,
+) -> str:
+    if not has_data:
+        return "gray"
+    if availability_pct <= 90 or packet_loss_pct >= 10:
+        return "red"
+    if latency_ms > 300 or packet_loss_pct >= 5 or availability_pct <= 95:
+        return "yellow"
+    return "green"

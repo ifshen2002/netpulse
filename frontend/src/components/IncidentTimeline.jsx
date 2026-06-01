@@ -27,7 +27,7 @@ export default function IncidentTimeline() {
           <span style={{ fontSize: 10 }}>
             {inc.status === 'open' ? '\u{1F534}' : '\u{2705}'}
           </span>
-          <span className="font-semibold" style={{ color: 'var(--text-h)' }}>{inc.node_id}</span>
+          <span className="font-semibold" style={{ color: 'var(--text-h)' }}>{inc.node_id || inc.probe_id}</span>
           {inc.latestMessage && (
             <span style={{ color: 'var(--yellow)', fontSize: 10 }}>
               {inc.latestMessage}

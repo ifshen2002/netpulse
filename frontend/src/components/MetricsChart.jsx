@@ -1,5 +1,5 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import useMetricsStore from '../store/metricsStore'
+import useMetricsStore, { EMPTY_ARR } from '../store/metricsStore'
 import { toUTC8 } from '../lib/time'
 
 const METRIC_COLORS = {
@@ -17,8 +17,7 @@ const UNITS = { cpu: '%', memory: '%', latency_ms: 'ms', packet_loss_pct: '%' }
 const ALL_NODES = ['node-1', 'node-2', 'node-3']
 const NODE_LABELS = { 'node-1': 'Host', 'node-2': 'Svc-A', 'node-3': 'Svc-B' }
 
-function mergeSeries(nodeIds, windowMinutes) {
-  const { history } = useMetricsStore.getState()
+function mergeSeries(nodeIds, windowMinutes, history) {
   const cutoff = windowMinutes > 0
     ? new Date(Date.now() - windowMinutes * 60 * 1000).toISOString()
     : null
@@ -124,8 +123,9 @@ export default function MetricsChart() {
   const visibleNodes = useMetricsStore((s) => s.visibleNodes)
   const timeWindow = useMetricsStore((s) => s.timeWindow)
   const setTimeWindow = useMetricsStore((s) => s.setTimeWindow)
+  const history = useMetricsStore((s) => s.history || EMPTY_ARR)
   const activeNodes = ALL_NODES.filter((id) => visibleNodes[id] !== false)
-  const data = mergeSeries(activeNodes, timeWindow)
+  const data = mergeSeries(activeNodes, timeWindow, history)
   const stats = computeStats(data, activeNodes)
 
   if (data.length === 0) {

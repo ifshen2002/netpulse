@@ -7,6 +7,10 @@ const TYPE_COLORS = {
   heartbeat_timeout: 'var(--gray)',
   db_exhaustion: 'var(--accent)',
   cache_unavailable: 'var(--accent)',
+  probe_latency_high: 'var(--red)',
+  probe_packet_loss_high: 'var(--yellow)',
+  probe_availability_low: 'var(--red)',
+  probe_heartbeat_timeout: 'var(--gray)',
 }
 
 const THRESHOLD_LABELS = {
@@ -15,6 +19,10 @@ const THRESHOLD_LABELS = {
   heartbeat_timeout: '15s',
   db_exhaustion: 'DB off',
   cache_unavailable: 'Cache off',
+  probe_latency_high: '>300ms',
+  probe_packet_loss_high: '>5%',
+  probe_availability_low: '<95%',
+  probe_heartbeat_timeout: '15s',
 }
 
 export default function AlertBanner() {
@@ -41,7 +49,7 @@ export default function AlertBanner() {
           }}
         >
           <span className="font-semibold" style={{ color: 'var(--text-h)' }}>[{a.alert_type}]</span>
-          <span className="ml-1" style={{ color: 'var(--text)' }}>{a.node_id}</span>
+          <span className="ml-1" style={{ color: 'var(--text)' }}>{a.node_id || a.probe_id}</span>
           <span className="ml-1" style={{ color: 'var(--gray)' }}>{a.message}</span>
           <span
             className="ml-1 rounded px-1"

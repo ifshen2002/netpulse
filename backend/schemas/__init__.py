@@ -23,7 +23,8 @@ class NodeOut(BaseModel):
 
 class AlertOut(BaseModel):
     id: str
-    node_id: str
+    node_id: str | None = None
+    probe_id: str | None = None
     incident_id: str | None = None
     alert_type: str
     message: str
@@ -35,6 +36,7 @@ class IncidentOut(BaseModel):
     id: str
     title: str
     status: str
+    probe_id: str | None = None
     opened_at: str
     closed_at: str | None = None
 
@@ -57,3 +59,99 @@ class ChaosEventOut(BaseModel):
     started_at: str
     ended_at: str | None = None
     config: dict | None = None
+
+
+# ── V2 schemas ─────────────────────────────────────────────
+
+
+class EndpointOut(BaseModel):
+    id: str
+    name: str
+    target_host: str
+    enabled: bool
+    created_at: str | None = None
+
+
+class EndpointCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    target_host: str = Field(min_length=1, max_length=256)
+
+
+class EndpointUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    target_host: str | None = Field(default=None, min_length=1, max_length=256)
+    enabled: bool | None = None
+
+
+class ProbeOut(BaseModel):
+    id: str
+    name: str
+    protocol: str
+    endpoint: str
+    endpoint_id: str | None = None
+    status: str
+    last_seen: str | None = None
+    created_at: str | None = None
+
+
+class LinkOut(BaseModel):
+    id: str
+    probe_id: str
+    endpoint: str
+    protocol: str
+    status: str
+    last_seen: str | None = None
+    created_at: str | None = None
+
+
+class ProbeMetricOut(BaseModel):
+    probe_id: str
+    link_id: str
+    packet_evidence_id: str
+    timestamp: str
+    latency_ms: float
+    packet_loss_pct: float
+    availability_pct: float
+    status: str
+
+
+class AlertRuleOut(BaseModel):
+    id: str
+    name: str
+    metric: str
+    operator: str
+    threshold: float
+    severity: str
+    enabled: bool
+    created_at: str | None = None
+
+
+class AlertRuleCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    metric: str = Field(min_length=1)
+    operator: str = Field(min_length=1)
+    threshold: float
+    severity: str = Field(default="critical")
+
+
+class AlertRuleUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    metric: str | None = None
+    operator: str | None = None
+    threshold: float | None = None
+    severity: str | None = None
+    enabled: bool | None = None
+
+
+class PacketEvidenceOut(BaseModel):
+    id: str
+    probe_id: str
+    link_id: str
+    protocol: str
+    src_ip: str
+    dst_ip: str
+    ttl: int
+    packet_size_bytes: int
+    icmp_seq: int
+    rtt_ms: float
+    timestamp: str

@@ -24,6 +24,9 @@ export default function useWebSocket() {
         store.getState().setConnected(true)
         store.getState().fetchChaosStatus()
         store.getState().fetchInitialMetrics()
+        store.getState().fetchInitialProbes()
+        store.getState().fetchEndpoints()
+        store.getState().fetchNetworkChaosStatus()
       }
 
       ws.onmessage = (msg) => {
@@ -45,6 +48,15 @@ export default function useWebSocket() {
               break
             case 'node_status_changed':
               s.setNodeStatus(event.node_id, event.status)
+              break
+            case 'probe_metric_update':
+              s.updateProbeMetric(event)
+              break
+            case 'packet_evidence':
+              s.updatePacketEvidence(event)
+              break
+            case 'link_status_changed':
+              s.updateLinkStatus(event)
               break
           }
         } catch {
