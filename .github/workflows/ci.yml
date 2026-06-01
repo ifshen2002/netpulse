@@ -306,6 +306,18 @@ jobs:
         with:
           target: http://localhost:8000
           cmd_options: -I
+          allow_issue_writing: false
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            zap.out
+            report.html
+            report.md
+            report.json
 
       - name: Stop services
         if: always()
