@@ -65,7 +65,7 @@ function computeStats(data, probeIds, metricKey) {
   return stats
 }
 
-function ChartTooltip({ active, payload, label, metricKey, metricLabel, unit }) {
+function ChartTooltip({ active, payload, label, unit }) {
   if (!active || !payload || payload.length === 0) return null
 
   return (
@@ -194,7 +194,7 @@ export default function ProbeTelemetry() {
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
                 <XAxis dataKey="timestamp" tick={{ fontSize: 10, fill: 'var(--gray)' }} interval="preserveStartEnd" />
                 <YAxis tick={{ fontSize: 10, fill: 'var(--gray)' }} width={36} />
-                <Tooltip content={<ChartTooltip metricKey={metric.key} metricLabel={metric.label} unit={metric.unit} />} />
+                <Tooltip content={<ChartTooltip unit={metric.unit} />} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 {activeProbes.map((pid, idx) => (
                   <Line

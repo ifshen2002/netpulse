@@ -24,7 +24,23 @@ export default function AlertRulesManager() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const fetchRules = async () => {
+  useEffect(() => {
+    async function load() {
+      try {
+        const resp = await fetch('/api/alert-rules')
+        const json = await resp.json()
+        if (json.success) {
+          setRules(json.data)
+        }
+      } catch {
+        // backend may not be ready
+      }
+      setLoaded(true)
+    }
+    load()
+  }, [])
+
+  async function refreshRules() {
     try {
       const resp = await fetch('/api/alert-rules')
       const json = await resp.json()
@@ -34,12 +50,7 @@ export default function AlertRulesManager() {
     } catch {
       // backend may not be ready
     }
-    setLoaded(true)
   }
-
-  useEffect(() => {
-    fetchRules()
-  }, [])
 
   const resetForm = () => {
     setForm({ name: '', metric: 'latency', operator: '>', threshold: 100, severity: 'critical' })
@@ -82,7 +93,7 @@ export default function AlertRulesManager() {
         setError(json.error?.message || 'Save failed')
         return
       }
-      fetchRules()
+      refreshRules()
       resetForm()
     } catch {
       setError('Network error')
@@ -95,7 +106,7 @@ export default function AlertRulesManager() {
     if (!window.confirm(`Delete rule "${rule.name}"?`)) return
     try {
       await fetch(`/api/alert-rules/${rule.id}`, { method: 'DELETE' })
-      fetchRules()
+      refreshRules()
     } catch {
       // ignore
     }
@@ -104,7 +115,7 @@ export default function AlertRulesManager() {
   const doToggle = async (rule) => {
     try {
       await fetch(`/api/alert-rules/${rule.id}/toggle`, { method: 'PATCH' })
-      fetchRules()
+      refreshRules()
     } catch {
       // ignore
     }

@@ -63,7 +63,6 @@ export default function NetworkChaosPanel() {
       if (recJson.success && recJson.data) {
         useMetricsStore.getState().setNetworkChaos(null)
         // Patch ended_at into lastChaosSession if missing
-        const store2 = useMetricsStore.getState()
         const session = { ...recJson.data, ended_at: recJson.data.ended_at || new Date().toISOString() }
         useMetricsStore.setState({ lastChaosSession: session, networkChaos: null })
       } else {

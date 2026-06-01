@@ -17,7 +17,6 @@ const COLS = [
 
 export default function PacketEvidencePanel() {
   const packetEvidence = useMetricsStore((s) => s.packetEvidence)
-  const packetEvidenceTimeline = useMetricsStore((s) => s.packetEvidenceTimeline)
   const fetchEvidenceTimeline = useMetricsStore((s) => s.fetchEvidenceTimeline)
   const probeIds = Object.keys(packetEvidence).sort()
   const [expanded, setExpanded] = useState(null)

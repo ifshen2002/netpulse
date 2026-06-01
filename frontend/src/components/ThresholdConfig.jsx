@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import useMetricsStore from '../store/metricsStore'
 
 const THRESHOLD_DEFAULTS = {
   latency_ms: 300,
