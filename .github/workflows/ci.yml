@@ -302,11 +302,14 @@ jobs:
           curl -s http://localhost:8000/api/health || exit 1
 
       - name: ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
-        with:
-          target: http://localhost:8000
-          cmd_options: -I
-          allow_issue_writing: false
+        run: |
+          docker run --rm --network host \
+            -v "$(pwd)":/zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:8000 -I \
+            -r /zap/wrk/zap-report.html \
+            -w /zap/wrk/zap-report.md \
+            -J /zap/wrk/zap-report.json
 
       - name: Upload ZAP report
         if: always()
@@ -314,10 +317,9 @@ jobs:
         with:
           name: zap-report
           path: |
-            zap.out
-            report.html
-            report.md
-            report.json
+            zap-report.html
+            zap-report.md
+            zap-report.json
 
       - name: Stop services
         if: always()
