@@ -7,13 +7,13 @@ const CHAOS_TYPES = [
 ]
 
 export default function NetworkChaosPanel() {
-  const visibleProbes = useMetricsStore((s) => s.visibleProbes)
+  const visibleEndpoints = useMetricsStore((s) => s.visibleEndpoints)
   const networkChaos = useMetricsStore((s) => s.networkChaos)
   const lastChaosSession = useMetricsStore((s) => s.lastChaosSession)
   const alerts = useMetricsStore((s) => s.alerts)
-  const probeIds = Object.keys(visibleProbes).sort()
+  const endpointIds = Object.keys(visibleEndpoints).sort()
 
-  const [targetProbe, setTargetProbe] = useState(probeIds[0] || '')
+  const [targetEndpoint, setTargetProbe] = useState(endpointIds[0] || '')
   const [chaosType, setChaosType] = useState('latency')
   const [value, setValue] = useState(100)
   const [injecting, setInjecting] = useState(false)
@@ -21,19 +21,19 @@ export default function NetworkChaosPanel() {
   const activeType = CHAOS_TYPES.find((t) => t.key === chaosType) || CHAOS_TYPES[0]
 
   // Keep target in sync when probes load
-  if (probeIds.length > 0 && !probeIds.includes(targetProbe)) {
-    setTargetProbe(probeIds[0])
+  if (endpointIds.length > 0 && !endpointIds.includes(targetEndpoint)) {
+    setTargetProbe(endpointIds[0])
   }
 
   async function doInject() {
-    if (!targetProbe) return
+    if (!targetEndpoint) return
     setInjecting(true)
     try {
       await fetch('/api/chaos/network/inject', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          probe_id: targetProbe,
+          endpoint_id: targetEndpoint,
           chaos_type: chaosType,
           value: Number(value),
         }),
@@ -50,13 +50,13 @@ export default function NetworkChaosPanel() {
     setInjecting(false)
   }
 
-  async function doRecover(probeId) {
+  async function doRecover(endpointId) {
     setInjecting(true)
     try {
       const recResp = await fetch('/api/chaos/network/recover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(probeId ? { probe_id: probeId } : {}),
+        body: JSON.stringify(endpointId ? { endpoint_id: endpointId } : {}),
       })
       const recJson = await recResp.json()
       // Capture completed session (includes ended_at) before clearing
@@ -78,14 +78,14 @@ export default function NetworkChaosPanel() {
     setInjecting(false)
   }
 
-  if (probeIds.length === 0) {
+  if (endpointIds.length === 0) {
     return (
       <div
         className="rounded-lg p-3"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
       >
         <h2>Network Chaos</h2>
-        <p className="text-xs" style={{ color: 'var(--gray)' }}>No probes available</p>
+        <p className="text-xs" style={{ color: 'var(--gray)' }}>No endpoints available</p>
       </div>
     )
   }
@@ -101,7 +101,7 @@ export default function NetworkChaosPanel() {
         {/* Inject controls */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <select
-            value={targetProbe}
+            value={targetEndpoint}
             onChange={(e) => setTargetProbe(e.target.value)}
             className="rounded px-1.5 py-0.5"
             style={{
@@ -112,7 +112,7 @@ export default function NetworkChaosPanel() {
               cursor: 'pointer',
             }}
           >
-            {probeIds.map((pid) => (
+            {endpointIds.map((pid) => (
               <option key={pid} value={pid}>{pid}</option>
             ))}
           </select>
@@ -161,7 +161,7 @@ export default function NetworkChaosPanel() {
 
           <button
             onClick={doInject}
-            disabled={injecting || !targetProbe}
+            disabled={injecting || !targetEndpoint}
             className="rounded px-2 py-0.5 font-semibold transition-colors"
             style={{
               background: injecting ? 'var(--gray)' : 'var(--accent-bg)',
@@ -183,14 +183,14 @@ export default function NetworkChaosPanel() {
           >
             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--accent)' }} />
             <span style={{ color: 'var(--text-h)', fontWeight: 600 }}>
-              {networkChaos.probe_id}
+              {networkChaos.endpoint_id}
             </span>
             <span style={{ color: 'var(--text)' }}>
               {networkChaos.chaos_type} {networkChaos.value}
               {networkChaos.chaos_type === 'latency' ? 'ms' : '%'}
             </span>
             <button
-              onClick={() => doRecover(networkChaos.probe_id)}
+              onClick={() => doRecover(networkChaos.endpoint_id)}
               disabled={injecting}
               className="rounded px-2 py-0.5 font-semibold ml-auto"
               style={{
@@ -232,7 +232,7 @@ export default function NetworkChaosPanel() {
           const sessionStart = session.started_at
           const sessionEnd = session.ended_at
           const sessionAlerts = alerts.filter((a) =>
-            a.probe_id === session.probe_id &&
+            a.endpoint_id === session.endpoint_id &&
             a.timestamp >= sessionStart &&
             (!sessionEnd || a.timestamp <= sessionEnd)
           )
@@ -251,7 +251,7 @@ export default function NetworkChaosPanel() {
               <div className="flex flex-col gap-0.5 text-xs">
                 <div className="flex gap-2">
                   <span style={{ color: 'var(--gray)', minWidth: 44 }}>Target:</span>
-                  <span style={{ color: 'var(--text-h)', fontWeight: 600 }}>{session.probe_id}</span>
+                  <span style={{ color: 'var(--text-h)', fontWeight: 600 }}>{session.endpoint_id}</span>
                 </div>
                 <div className="flex gap-2">
                   <span style={{ color: 'var(--gray)', minWidth: 44 }}>Type:</span>

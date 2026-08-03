@@ -1,21 +1,23 @@
 """V2 network chaos REST API endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from db import engine
 from services.netchaos import inject, recover, status
+from services.auth import CurrentUser, audit, require_project_editor, require_project_member
 
 router = APIRouter(prefix="/api/chaos/network", tags=["network-chaos"])
 
 
 class NetworkChaosInjectIn(BaseModel):
-    probe_id: str = Field(min_length=1)
+    endpoint_id: str = Field(min_length=1)
     chaos_type: str = Field(pattern=r"^(latency|packet_loss)$")
     value: float = Field(gt=0)
 
 
 class NetworkChaosRecoverIn(BaseModel):
-    probe_id: str | None = None
+    endpoint_id: str | None = None
 
 
 def _validate_value(chaos_type: str, value: float) -> None:
@@ -26,10 +28,19 @@ def _validate_value(chaos_type: str, value: float) -> None:
 
 
 @router.post("/inject")
-async def inject_chaos(body: NetworkChaosInjectIn):
+async def inject_chaos(body: NetworkChaosInjectIn, user: CurrentUser = Depends(require_project_editor)):
     _validate_value(body.chaos_type, body.value)
     try:
-        result = await inject(body.probe_id, body.chaos_type, body.value)
+        result = await inject(body.endpoint_id, body.chaos_type, body.value)
+        async with engine.begin() as conn:
+            await audit(
+                conn,
+                action="network_chaos.injected",
+                actor_user_id=user.id,
+                resource_type="network_chaos",
+                resource_id=body.endpoint_id,
+                details={"chaos_type": body.chaos_type, "value": body.value},
+            )
         return {"success": True, "data": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -38,12 +49,21 @@ async def inject_chaos(body: NetworkChaosInjectIn):
 
 
 @router.post("/recover")
-async def recover_chaos(body: NetworkChaosRecoverIn = None):
-    pid = body.probe_id if body else None
-    result = await recover(pid)
+async def recover_chaos(body: NetworkChaosRecoverIn = None, user: CurrentUser = Depends(require_project_editor)):
+    eid = body.endpoint_id if body else None
+    result = await recover(eid)
+    async with engine.begin() as conn:
+        await audit(
+            conn,
+            action="network_chaos.recovered",
+            actor_user_id=user.id,
+            resource_type="network_chaos",
+            resource_id=eid,
+            details={},
+        )
     return {"success": True, "data": result}
 
 
 @router.get("/status")
-async def chaos_status():
+async def chaos_status(user: CurrentUser = Depends(require_project_member)):
     return {"success": True, "data": status()}

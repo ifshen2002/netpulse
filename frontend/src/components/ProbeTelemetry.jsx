@@ -9,7 +9,7 @@ const METRICS = [
   { key: 'availability_pct', label: 'Availability', unit: '%', yLabel: '%' },
 ]
 
-const PROBE_COLORS = ['var(--accent)', 'var(--green)', 'var(--yellow)', 'var(--red)', '#60a5fa', '#f472b6']
+const ENDPOINT_COLORS = ['var(--accent)', 'var(--green)', 'var(--yellow)', 'var(--red)', '#60a5fa', '#f472b6']
 
 const TIME_OPTIONS = [
   { label: 'ALL', value: 0 },
@@ -94,18 +94,18 @@ function ChartTooltip({ active, payload, label, unit }) {
 
 export default function ProbeTelemetry() {
   const [activeMetric, setActiveMetric] = useState('latency_ms')
-  const visibleProbes = useMetricsStore((s) => s.visibleProbes)
-  const probeHistory = useMetricsStore((s) => s.probeHistory || EMPTY_ARR)
+  const visibleEndpoints = useMetricsStore((s) => s.visibleEndpoints)
+  const endpointHistory = useMetricsStore((s) => s.endpointHistory || EMPTY_ARR)
   const timeWindow = useMetricsStore((s) => s.timeWindow)
   const setTimeWindow = useMetricsStore((s) => s.setTimeWindow)
-  const toggleProbeVisibility = useMetricsStore((s) => s.toggleProbeVisibility)
+  const toggleEndpointVisibility = useMetricsStore((s) => s.toggleEndpointVisibility)
 
-  const allProbeIds = Object.keys(visibleProbes).sort()
-  const activeProbes = allProbeIds.filter((id) => visibleProbes[id] !== false)
+  const allEndpointIds = Object.keys(visibleEndpoints).sort()
+  const activeEndpoints = allEndpointIds.filter((id) => visibleEndpoints[id] !== false)
 
   const metric = METRICS.find((m) => m.key === activeMetric) || METRICS[0]
-  const data = mergeSeries(activeProbes, timeWindow, probeHistory, metric.key)
-  const stats = computeStats(data, activeProbes, metric.key)
+  const data = mergeSeries(activeEndpoints, timeWindow, endpointHistory, metric.key)
+  const stats = computeStats(data, activeEndpoints, metric.key)
 
   return (
     <div
@@ -116,12 +116,12 @@ export default function ProbeTelemetry() {
         <h2 style={{ margin: 0 }}>Link Telemetry</h2>
         {/* probe toggles */}
         <div className="flex items-center gap-1 text-xs">
-          {allProbeIds.map((pid) => {
-            const on = visibleProbes[pid] !== false
+          {allEndpointIds.map((pid) => {
+            const on = visibleEndpoints[pid] !== false
             return (
               <button
                 key={pid}
-                onClick={() => toggleProbeVisibility(pid)}
+                onClick={() => toggleEndpointVisibility(pid)}
                 className="rounded px-1.5 py-0.5 border transition-colors"
                 style={{
                   background: on ? 'var(--accent-bg)' : 'transparent',
@@ -163,7 +163,7 @@ export default function ProbeTelemetry() {
 
       {data.length === 0 ? (
         <div className="flex items-center justify-center" style={{ height: 180, color: 'var(--gray)' }}>
-          <p className="text-sm">Waiting for probe metrics...</p>
+          <p className="text-sm">Waiting for endpoint metrics...</p>
         </div>
       ) : (
         <>
@@ -196,12 +196,12 @@ export default function ProbeTelemetry() {
                 <YAxis tick={{ fontSize: 10, fill: 'var(--gray)' }} width={36} />
                 <Tooltip content={<ChartTooltip unit={metric.unit} />} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                {activeProbes.map((pid, idx) => (
+                {activeEndpoints.map((pid, idx) => (
                   <Line
                     key={`${pid}_${metric.key}`}
                     type="monotone"
                     dataKey={`${pid}_${metric.key}`}
-                    stroke={PROBE_COLORS[idx % PROBE_COLORS.length]}
+                    stroke={ENDPOINT_COLORS[idx % ENDPOINT_COLORS.length]}
                     strokeWidth={1.5}
                     dot={false}
                     name={pid}
@@ -217,7 +217,7 @@ export default function ProbeTelemetry() {
             className="flex flex-col gap-1 text-xs px-2 py-1.5 rounded"
             style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}
           >
-            {activeProbes.map((pid) => {
+            {activeEndpoints.map((pid) => {
               const s = stats[pid]
               if (!s) return null
               return (

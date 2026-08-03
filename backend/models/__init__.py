@@ -49,8 +49,8 @@ class Alert(Base):
     node_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("nodes.id"), nullable=True
     )
-    probe_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("probes.id"), nullable=True
+    endpoint_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("endpoints.id"), nullable=True
     )
     incident_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("incidents.id"), nullable=True
@@ -75,8 +75,8 @@ class Incident(Base):
     status: Mapped[str] = mapped_column(
         String, nullable=False, default="open"
     )
-    probe_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("probes.id"), nullable=True
+    endpoint_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("endpoints.id"), nullable=True
     )
     opened_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
@@ -112,47 +112,22 @@ class Endpoint(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     target_host: Mapped[str] = mapped_column(String, nullable=False)
+    source_ip: Mapped[str | None] = mapped_column(String, nullable=True)
+    protocol: Mapped[str] = mapped_column(String, default="icmp")
+    status: Mapped[str] = mapped_column(String, default="gray")
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
-class Probe(Base):
-    __tablename__ = "probes"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    protocol: Mapped[str] = mapped_column(String, nullable=False)
-    endpoint: Mapped[str] = mapped_column(String, nullable=False)
-    endpoint_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("endpoints.id"), nullable=True
-    )
-    status: Mapped[str] = mapped_column(String, default="gray")
-    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-
-
-class Link(Base):
-    __tablename__ = "links"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    probe_id: Mapped[str] = mapped_column(String, ForeignKey("probes.id"), nullable=False)
-    endpoint: Mapped[str] = mapped_column(String, nullable=False)
-    protocol: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, default="gray")
-    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-
-
-class ProbeMetric(Base):
+class EndpointMetric(Base):
     __tablename__ = "probe_metrics"
     __table_args__ = (
-        Index("ix_probe_metrics_probe_timestamp", "probe_id", "timestamp"),
-        Index("ix_probe_metrics_link_timestamp", "link_id", "timestamp"),
+        Index("ix_endpoint_metrics_endpoint_timestamp", "endpoint_id", "timestamp"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    probe_id: Mapped[str] = mapped_column(String, ForeignKey("probes.id"), nullable=False)
-    link_id: Mapped[str] = mapped_column(String, ForeignKey("links.id"), nullable=False)
+    endpoint_id: Mapped[str] = mapped_column(String, ForeignKey("endpoints.id"), nullable=False)
     packet_evidence_id: Mapped[str] = mapped_column(
         String, ForeignKey("packet_evidence.id"), nullable=False
     )
@@ -182,8 +157,7 @@ class PacketEvidence(Base):
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    probe_id: Mapped[str] = mapped_column(String, ForeignKey("probes.id"), nullable=False)
-    link_id: Mapped[str] = mapped_column(String, ForeignKey("links.id"), nullable=False)
+    endpoint_id: Mapped[str] = mapped_column(String, ForeignKey("endpoints.id"), nullable=False)
     protocol: Mapped[str] = mapped_column(String, nullable=False)
     src_ip: Mapped[str] = mapped_column(String, nullable=False)
     dst_ip: Mapped[str] = mapped_column(String, nullable=False)

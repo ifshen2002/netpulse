@@ -124,7 +124,7 @@ export default function EndpointManager() {
           >
             <span
               className="w-2 h-2 rounded-full flex-shrink-0"
-              style={{ backgroundColor: statusColors[ep.probe_status] || 'var(--gray)' }}
+              style={{ backgroundColor: statusColors[ep.status] || 'var(--gray)' }}
             />
             <span style={{ color: 'var(--text-h)', fontWeight: 600, minWidth: '12ch' }}>
               {ep.name}

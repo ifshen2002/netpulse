@@ -70,7 +70,7 @@ const useMetricsStore = create((set) => ({
           alert_id: event.alert_id,
           incident_id: event.incident_id,
           node_id: event.node_id,
-          probe_id: event.probe_id,
+          endpoint_id: event.endpoint_id,
           alert_type: event.alert_type,
           message: event.message,
           evidence_id: event.evidence_id,
@@ -106,7 +106,7 @@ const useMetricsStore = create((set) => ({
           incident_id: event.incident_id,
           title: event.title,
           node_id: event.node_id,
-          probe_id: event.probe_id,
+          endpoint_id: event.endpoint_id,
           status: 'open',
           timestamp: event.timestamp,
           alertCount: 0,  // will be bumped by addAlert
@@ -212,14 +212,14 @@ const useMetricsStore = create((set) => ({
     }
   },
 
-  // ── V2 probe state ─────────────────────────────────────────
-  probeMetrics: {},
-  probeHistory: {},
+  // ── V2 endpoint telemetry state ─────────────────────────────
+  endpointMetrics: {},
+  endpointHistory: {},
   packetEvidence: {},
-  packetEvidenceTimeline: {},   // { [probe_id]: [...recent records] }
-  linkStatuses: {},
+  packetEvidenceTimeline: {},   // { [endpoint_id]: [...recent records] }
+  endpointStatuses: {},
   activeView: 'link',
-  visibleProbes: {},
+  visibleEndpoints: {},
 
   // ── V2 network chaos ──────────────────────────────────────
   networkChaos: null,
@@ -227,7 +227,6 @@ const useMetricsStore = create((set) => ({
 
   setNetworkChaos: (data) =>
     set((state) => {
-      // When chaos clears, capture the session for the last-chaos summary
       const prev = state.networkChaos
       return {
         networkChaos: data,
@@ -247,7 +246,7 @@ const useMetricsStore = create((set) => ({
     }
   },
 
-  updateProbeMetric: (event) =>
+  updateEndpointMetric: (event) =>
     set((state) => {
       const point = {
         timestamp: event.timestamp,
@@ -255,41 +254,37 @@ const useMetricsStore = create((set) => ({
         packet_loss_pct: event.packet_loss_pct,
         availability_pct: event.availability_pct,
       }
-      const prev = state.probeHistory[event.probe_id] || []
+      const prev = state.endpointHistory[event.endpoint_id] || []
       const next = [...prev, point]
       if (next.length > MAX_HISTORY) next.splice(0, next.length - MAX_HISTORY)
 
-      const nextVP = { ...state.visibleProbes }
-      if (!(event.probe_id in nextVP)) nextVP[event.probe_id] = true
+      const nextVE = { ...state.visibleEndpoints }
+      if (!(event.endpoint_id in nextVE)) nextVE[event.endpoint_id] = true
 
       return {
-        probeMetrics: {
-          ...state.probeMetrics,
-          [event.probe_id]: {
+        endpointMetrics: {
+          ...state.endpointMetrics,
+          [event.endpoint_id]: {
             latency_ms: event.latency_ms,
             packet_loss_pct: event.packet_loss_pct,
             availability_pct: event.availability_pct,
             status: event.status,
             endpoint: event.endpoint,
-            link_id: event.link_id,
             timestamp: event.timestamp,
           },
         },
-        probeHistory: {
-          ...state.probeHistory,
-          [event.probe_id]: next,
+        endpointHistory: {
+          ...state.endpointHistory,
+          [event.endpoint_id]: next,
         },
-        visibleProbes: nextVP,
+        visibleEndpoints: nextVE,
       }
     }),
 
   updatePacketEvidence: (event) =>
     set((state) => {
-      // Auto-register probe visibility when evidence arrives via WebSocket.
-      // This handles the case where fetchInitialProbes failed on WS open
-      // (e.g. DB not ready) but evidence later flows through push events.
-      const nextVP = { ...state.visibleProbes }
-      if (!(event.probe_id in nextVP)) nextVP[event.probe_id] = true
+      const nextVE = { ...state.visibleEndpoints }
+      if (!(event.endpoint_id in nextVE)) nextVE[event.endpoint_id] = true
       const record = {
         evidence_id: event.evidence_id,
         protocol: event.protocol,
@@ -300,73 +295,68 @@ const useMetricsStore = create((set) => ({
         icmp_seq: event.icmp_seq,
         rtt_ms: event.rtt_ms,
         timestamp: event.timestamp,
-        link_id: event.link_id,
         endpoint: event.endpoint,
         raw_output: event.raw_output || '',
       }
-      // Accumulate evidence timeline — keep last 30 records per probe
-      const prevTimeline = state.packetEvidenceTimeline[event.probe_id] || []
+      const prevTimeline = state.packetEvidenceTimeline[event.endpoint_id] || []
       const nextTimeline = [...prevTimeline, record]
       if (nextTimeline.length > 30) nextTimeline.splice(0, nextTimeline.length - 30)
 
       return {
         packetEvidence: {
           ...state.packetEvidence,
-          [event.probe_id]: record,
+          [event.endpoint_id]: record,
         },
         packetEvidenceTimeline: {
           ...state.packetEvidenceTimeline,
-          [event.probe_id]: nextTimeline,
+          [event.endpoint_id]: nextTimeline,
         },
-        visibleProbes: nextVP,
+        visibleEndpoints: nextVE,
       }
     }),
 
-  updateLinkStatus: (event) =>
+  updateEndpointStatus: (event) =>
     set((state) => {
-      const probeId = event.probe_id
-      const existing = state.probeMetrics[probeId]
-      // Also update the probe metric status if it exists
+      const eid = event.endpoint_id
+      const existing = state.endpointMetrics[eid]
       const nextMetrics = existing
-        ? { ...state.probeMetrics, [probeId]: { ...existing, status: event.status } }
-        : state.probeMetrics
+        ? { ...state.endpointMetrics, [eid]: { ...existing, status: event.status } }
+        : state.endpointMetrics
       return {
-        linkStatuses: { ...state.linkStatuses, [event.link_id]: event.status },
-        probeMetrics: nextMetrics,
+        endpointStatuses: { ...state.endpointStatuses, [eid]: event.status },
+        endpointMetrics: nextMetrics,
       }
     }),
 
   setActiveView: (view) => set({ activeView: view }),
 
-  toggleProbeVisibility: (probeId) =>
+  toggleEndpointVisibility: (endpointId) =>
     set((state) => ({
-      visibleProbes: {
-        ...state.visibleProbes,
-        [probeId]: !state.visibleProbes[probeId],
+      visibleEndpoints: {
+        ...state.visibleEndpoints,
+        [endpointId]: !state.visibleEndpoints[endpointId],
       },
     })),
 
-  fetchInitialProbes: async () => {
+  fetchInitialEndpoints: async () => {
     try {
-      const resp = await fetch('/api/probes')
+      const resp = await fetch('/api/endpoints')
       const json = await resp.json()
       if (!json.success) return
-      const probes = json.data.probes || []
-      const windowS = json.data.window_s || 30
+      const endpoints = json.data || []
 
-      // Seed visibleProbes
       set((state) => {
-        const next = { ...state.visibleProbes }
-        for (const p of probes) {
-          if (!(p.id in next)) next[p.id] = true
+        const next = { ...state.visibleEndpoints }
+        for (const ep of endpoints) {
+          if (!(ep.id in next)) next[ep.id] = true
         }
-        return { visibleProbes: next }
+        return { visibleEndpoints: next }
       })
 
-      // Fetch initial metrics for each probe
-      for (const p of probes) {
+      // Fetch initial metrics for each endpoint
+      for (const ep of endpoints) {
         try {
-          const mResp = await fetch(`/api/probes/${p.id}/metrics?seconds=${Math.max(windowS * 2, 60)}`)
+          const mResp = await fetch(`/api/endpoints/${ep.id}/metrics?seconds=120`)
           const mJson = await mResp.json()
           if (mJson.success && mJson.data.metrics.length > 0) {
             const points = mJson.data.metrics.reverse().map((d) => ({
@@ -376,28 +366,28 @@ const useMetricsStore = create((set) => ({
               availability_pct: d.availability_pct,
             }))
             set((state) => ({
-              probeHistory: {
-                ...state.probeHistory,
-                [p.id]: points.slice(-MAX_HISTORY),
+              endpointHistory: {
+                ...state.endpointHistory,
+                [ep.id]: points.slice(-MAX_HISTORY),
               },
             }))
           }
         } catch {
-          // probe may not have metrics yet
+          // endpoint may not have metrics yet
         }
       }
 
-      // Fetch latest packet evidence for each probe
-      for (const p of probes) {
+      // Fetch latest packet evidence for each endpoint
+      for (const ep of endpoints) {
         try {
-          const eResp = await fetch(`/api/probes/${p.id}/evidence?limit=1`)
+          const eResp = await fetch(`/api/endpoints/${ep.id}/evidence?limit=1`)
           const eJson = await eResp.json()
           if (eJson.success && eJson.data.evidence.length > 0) {
             const e = eJson.data.evidence[0]
             set((state) => ({
               packetEvidence: {
                 ...state.packetEvidence,
-                [p.id]: {
+                [ep.id]: {
                   protocol: e.protocol,
                   src_ip: e.src_ip,
                   dst_ip: e.dst_ip,
@@ -406,8 +396,7 @@ const useMetricsStore = create((set) => ({
                   icmp_seq: e.icmp_seq,
                   rtt_ms: e.rtt_ms,
                   timestamp: e.timestamp,
-                  link_id: e.link_id,
-                  endpoint: p.endpoint,
+                  endpoint: ep.target_host,
                 },
               },
             }))
@@ -466,9 +455,84 @@ const useMetricsStore = create((set) => ({
     })
   },
 
-  fetchEvidenceTimeline: async (probeId, limit = 20) => {
+  // ── notifications ────────────────────────────────────────
+  notifications: [],
+  unreadCount: 0,
+
+  addNotification: (event) =>
+    set((state) => {
+      // Only add if this notification is for the current user (filtered client-side
+      // since broadcast goes to all connected clients)
+      const session = JSON.parse(localStorage.getItem('netpulse.session') || 'null')
+      if (!session || session.user?.id !== event.user_id) return state
+      const exists = state.notifications.some((n) => n.id === event.notification_id)
+      if (exists) return state
+      const entry = {
+        id: event.notification_id,
+        alert_id: event.alert_id,
+        incident_id: event.incident_id,
+        project_id: event.project_id,
+        title: event.title,
+        body: event.body,
+        severity: event.severity,
+        status: 'unread',
+        created_at: new Date().toISOString(),
+      }
+      return {
+        notifications: [entry, ...state.notifications].slice(0, 50),
+        unreadCount: state.unreadCount + 1,
+      }
+    }),
+
+  fetchNotifications: async () => {
     try {
-      const resp = await fetch(`/api/probes/${probeId}/evidence?limit=${limit}`)
+      const resp = await fetch('/api/notifications?limit=50')
+      const json = await resp.json()
+      if (json.success) {
+        const unread = json.data.filter((n) => n.status === 'unread').length
+        set({ notifications: json.data, unreadCount: unread })
+      }
+    } catch {
+      // backend may not be ready
+    }
+  },
+
+  markNotificationRead: async (notificationId) => {
+    try {
+      const resp = await fetch(`/api/notifications/${notificationId}/read`, { method: 'PATCH' })
+      const json = await resp.json()
+      if (json.success) {
+        set((state) => ({
+          notifications: state.notifications.map((n) =>
+            n.id === notificationId ? { ...n, status: 'read' } : n
+          ),
+          unreadCount: Math.max(0, state.unreadCount - 1),
+        }))
+      }
+    } catch {
+      // network error
+    }
+  },
+
+  acknowledgeNotification: async (notificationId) => {
+    try {
+      const resp = await fetch(`/api/notifications/${notificationId}/acknowledge`, { method: 'PATCH' })
+      const json = await resp.json()
+      if (json.success) {
+        set((state) => ({
+          notifications: state.notifications.map((n) =>
+            n.id === notificationId ? { ...n, status: 'acknowledged' } : n
+          ),
+        }))
+      }
+    } catch {
+      // network error
+    }
+  },
+
+  fetchEvidenceTimeline: async (endpointId, limit = 20) => {
+    try {
+      const resp = await fetch(`/api/endpoints/${endpointId}/evidence?limit=${limit}`)
       const json = await resp.json()
       if (!json.success || !json.data.evidence.length) return
       const records = json.data.evidence.reverse().map((e) => ({
@@ -481,14 +545,13 @@ const useMetricsStore = create((set) => ({
         icmp_seq: e.icmp_seq,
         rtt_ms: e.rtt_ms,
         timestamp: e.timestamp,
-        link_id: e.link_id,
-        endpoint: json.data.probe_id,
+        endpoint: json.data.endpoint_id,
         raw_output: e.raw_output || '',
       }))
       set((state) => ({
         packetEvidenceTimeline: {
           ...state.packetEvidenceTimeline,
-          [probeId]: records.slice(-30),
+          [endpointId]: records.slice(-30),
         },
       }))
     } catch {

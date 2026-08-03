@@ -28,35 +28,48 @@ function Sparkline({ values, color }) {
   )
 }
 
-export default function EndpointCard({ endpoint }) {
-  const probeMetrics = useMetricsStore((s) => s.probeMetrics)
-  const probeHistory = useMetricsStore((s) => s.probeHistory)
+export default function EndpointCard({ endpoint, canEdit }) {
+  const endpointMetrics = useMetricsStore((s) => s.endpointMetrics)
+  const endpointHistory = useMetricsStore((s) => s.endpointHistory)
   const networkChaos = useMetricsStore((s) => s.networkChaos)
   const fetchEndpoints = useMetricsStore((s) => s.fetchEndpoints)
 
-  const probeId = endpoint.probe_id
-  const data = probeMetrics[probeId]
-  const history = probeHistory[probeId] || EMPTY_ARR
-  const isUnderChaos = networkChaos?.probe_id === probeId
-  const statusColor = STATUS_COLORS[endpoint.probe_status] || 'var(--gray)'
+  const eid = endpoint.id
+  const data = endpointMetrics[eid]
+  const history = endpointHistory[eid] || EMPTY_ARR
+  const isUnderChaos = networkChaos?.endpoint_id === eid
+  const statusColor = STATUS_COLORS[endpoint.status] || 'var(--gray)'
 
   const [showForm, setShowForm] = useState(false)
   const [editName, setEditName] = useState('')
   const [editTarget, setEditTarget] = useState('')
+  const [editSourceIp, setEditSourceIp] = useState('')
+  const [sourceIps, setSourceIps] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const openEdit = () => {
     setEditName(endpoint.name)
     setEditTarget(endpoint.target_host)
+    setEditSourceIp(endpoint.source_ip || '')
+    fetchSourceIps()
     setShowForm(true)
     setError('')
+  }
+
+  const fetchSourceIps = async () => {
+    try {
+      const resp = await fetch('/api/source-ips')
+      const json = await resp.json()
+      if (json.success) setSourceIps(json.data || [])
+    } catch { /* ignore */ }
   }
 
   const resetForm = () => {
     setShowForm(false)
     setEditName('')
     setEditTarget('')
+    setEditSourceIp('')
     setError('')
   }
 
@@ -67,7 +80,7 @@ export default function EndpointCard({ endpoint }) {
       const resp = await fetch(`/api/endpoints/${endpoint.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editName.trim(), target_host: editTarget.trim() }),
+        body: JSON.stringify({ name: editName.trim(), target_host: editTarget.trim(), source_ip: editSourceIp.trim() || null }),
       })
       const json = await resp.json()
       if (!json.success) {
@@ -124,7 +137,7 @@ export default function EndpointCard({ endpoint }) {
             whiteSpace: 'nowrap',
           }}
         >
-          {endpoint.enabled ? (endpoint.probe_status || 'gray') : 'OFF'}
+          {endpoint.enabled ? (endpoint.status || 'gray') : 'OFF'}
         </span>
         {isUnderChaos && (
           <span
@@ -142,9 +155,9 @@ export default function EndpointCard({ endpoint }) {
         )}
       </div>
 
-      {/* Target host */}
+      {/* Target info: source → destination */}
       <p className="text-xs mb-2 truncate" style={{ color: 'var(--gray)' }}>
-        ICMP &rarr; {endpoint.target_host}
+        ICMP {endpoint.source_ip && <span>{endpoint.source_ip} &rarr; </span>}{endpoint.target_host}
       </p>
 
       {/* Metrics or disabled / gray state */}
@@ -185,56 +198,58 @@ export default function EndpointCard({ endpoint }) {
         </>
       )}
 
-      {/* Actions */}
-      <div className="flex items-center gap-1 mt-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
-        <button
-          onClick={doToggle}
-          className="rounded px-1.5 py-0.5 text-xs font-semibold"
-          style={{
-            background: endpoint.enabled ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-            color: endpoint.enabled ? 'var(--green)' : 'var(--red)',
-            border: `1px solid ${endpoint.enabled ? 'var(--green)' : 'var(--red)'}`,
-            fontSize: 9,
-            cursor: 'pointer',
-          }}
-        >
-          {endpoint.enabled ? 'ON' : 'OFF'}
-        </button>
-        <button
-          onClick={openEdit}
-          className="rounded px-1.5 py-0.5 text-xs"
-          style={{
-            background: 'transparent',
-            border: '1px solid var(--border)',
-            color: 'var(--gray)',
-            cursor: 'pointer',
-            fontSize: 9,
-          }}
-        >
-          Edit
-        </button>
-        <button
-          onClick={doDelete}
-          className="rounded px-1.5 py-0.5 text-xs"
-          style={{
-            background: 'transparent',
-            border: '1px solid var(--border)',
-            color: 'var(--red)',
-            cursor: 'pointer',
-            fontSize: 9,
-          }}
-        >
-          Del
-        </button>
-        {probeId && (
-          <span className="ml-auto text-xs" style={{ color: 'var(--gray)', fontSize: 8, fontFamily: 'var(--mono)' }}>
-            {probeId}
-          </span>
-        )}
+      {/* Actions — editor only */}
+      {canEdit && (
+        <div className="flex items-center gap-1 mt-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+          <button
+            onClick={doToggle}
+            className="rounded px-1.5 py-0.5 text-xs font-semibold"
+            style={{
+              background: endpoint.enabled ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+              color: endpoint.enabled ? 'var(--green)' : 'var(--red)',
+              border: `1px solid ${endpoint.enabled ? 'var(--green)' : 'var(--red)'}`,
+              fontSize: 9,
+              cursor: 'pointer',
+            }}
+          >
+            {endpoint.enabled ? 'ON' : 'OFF'}
+          </button>
+          <button
+            onClick={openEdit}
+            className="rounded px-1.5 py-0.5 text-xs"
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--border)',
+              color: 'var(--gray)',
+              cursor: 'pointer',
+              fontSize: 9,
+            }}
+          >
+            Edit
+          </button>
+          <button
+            onClick={doDelete}
+            className="rounded px-1.5 py-0.5 text-xs"
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--border)',
+              color: 'var(--red)',
+              cursor: 'pointer',
+              fontSize: 9,
+            }}
+          >
+            Del
+          </button>
+        </div>
+      )}
+      <div className="flex items-center gap-1 mt-1 pt-1" style={{ borderTop: canEdit ? 'none' : '1px solid var(--border)' }}>
+        <span className="text-xs" style={{ color: 'var(--gray)', fontSize: 8, fontFamily: 'var(--mono)' }}>
+          {eid}
+        </span>
       </div>
 
-      {/* Edit Modal */}
-      {showForm && (
+      {/* Edit Modal — editor only */}
+      {canEdit && showForm && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
           style={{ background: 'rgba(0,0,0,0.6)' }}
@@ -274,6 +289,28 @@ export default function EndpointCard({ endpoint }) {
                 }}
               />
             </label>
+
+            {sourceIps.length > 0 && (
+              <label className="flex flex-col gap-1 text-xs" style={{ color: 'var(--gray)' }}>
+                Source IP
+                <select
+                  value={editSourceIp}
+                  onChange={(e) => setEditSourceIp(e.target.value)}
+                  className="rounded px-2 py-1 text-sm"
+                  style={{
+                    background: 'var(--bg)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-h)',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">Auto-detect</option>
+                  {sourceIps.map((ip) => (
+                    <option key={ip} value={ip}>{ip}</option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             {error && (
               <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>

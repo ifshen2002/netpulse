@@ -2,12 +2,13 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
 from db import engine
 from services.alerting import reload_rules
+from services.auth import CurrentUser, audit, project_clause, require_project_editor, require_project_member
 
 router = APIRouter(prefix="/api", tags=["alert-rules"])
 
@@ -95,27 +96,30 @@ def _next_rule_id(num: int) -> str:
 
 
 @router.get("/alert-rules")
-async def list_alert_rules():
+async def list_alert_rules(user: CurrentUser = Depends(require_project_member), project_id: str | None = Header(default=None, alias="X-Project-ID")):
+    clause, params = project_clause(project_id)
     async with engine.begin() as conn:
         rows = (await conn.execute(
             text(
-                "SELECT id, name, metric, operator, threshold, severity, enabled, created_at "
-                "FROM alert_rules ORDER BY created_at"
-            )
+                f"SELECT id, name, metric, operator, threshold, severity, enabled, created_at "
+                f"FROM alert_rules WHERE 1=1{clause} ORDER BY created_at"
+            ), params
         )).fetchall()
 
     return {"success": True, "data": [_row_to_rule(r) for r in rows]}
 
 
 @router.get("/alert-rules/{rule_id}")
-async def get_alert_rule(rule_id: str):
+async def get_alert_rule(rule_id: str, user: CurrentUser = Depends(require_project_member), project_id: str | None = Header(default=None, alias="X-Project-ID")):
+    clause, params = project_clause(project_id)
+    params["id"] = rule_id
     async with engine.begin() as conn:
         row = (await conn.execute(
             text(
-                "SELECT id, name, metric, operator, threshold, severity, enabled, created_at "
-                "FROM alert_rules WHERE id = :id"
+                f"SELECT id, name, metric, operator, threshold, severity, enabled, created_at "
+                f"FROM alert_rules WHERE id = :id{clause}"
             ),
-            {"id": rule_id},
+            params,
         )).fetchone()
 
         if row is None:
@@ -125,7 +129,7 @@ async def get_alert_rule(rule_id: str):
 
 
 @router.post("/alert-rules", status_code=201)
-async def create_alert_rule(body: AlertRuleCreateIn):
+async def create_alert_rule(body: AlertRuleCreateIn, user: CurrentUser = Depends(require_project_editor), project_id: str | None = Header(default=None, alias="X-Project-ID")):
     async with engine.begin() as conn:
         count = (await conn.execute(text("SELECT COUNT(*) FROM alert_rules"))).fetchone()[0]
 
@@ -145,14 +149,23 @@ async def create_alert_rule(body: AlertRuleCreateIn):
         await conn.execute(
             text(
                 "INSERT INTO alert_rules "
-                "(id, name, metric, operator, threshold, severity, enabled, created_at) "
-                "VALUES (:id, :name, :metric, :operator, :threshold, :severity, :enabled, :now)"
+                "(id, name, metric, operator, threshold, severity, enabled, project_id, created_at) "
+                "VALUES (:id, :name, :metric, :operator, :threshold, :severity, :enabled, :project_id, :now)"
             ),
             {
                 "id": rule_id, "name": body.name, "metric": body.metric,
                 "operator": body.operator, "threshold": body.threshold,
-                "severity": body.severity, "enabled": True, "now": now,
+                "severity": body.severity, "enabled": True, "project_id": project_id, "now": now,
             },
+        )
+        await audit(
+            conn,
+            action="alert_rule.created",
+            actor_user_id=user.id,
+            resource_type="alert_rule",
+            resource_id=rule_id,
+            details={"name": body.name, "metric": body.metric, "severity": body.severity},
+            project_id=project_id,
         )
 
     await reload_rules()
@@ -160,7 +173,7 @@ async def create_alert_rule(body: AlertRuleCreateIn):
 
 
 @router.put("/alert-rules/{rule_id}")
-async def update_alert_rule(rule_id: str, body: AlertRuleUpdateIn):
+async def update_alert_rule(rule_id: str, body: AlertRuleUpdateIn, user: CurrentUser = Depends(require_project_editor)):
     async with engine.begin() as conn:
         existing = (await conn.execute(
             text(
@@ -193,26 +206,41 @@ async def update_alert_rule(rule_id: str, body: AlertRuleUpdateIn):
                 text("UPDATE alert_rules SET " + set_clause + " WHERE id = :id"),  # nosec B608
                 {**updates, "id": rule_id},
             )
+            await audit(
+                conn,
+                action="alert_rule.updated",
+                actor_user_id=user.id,
+                resource_type="alert_rule",
+                resource_id=rule_id,
+                details=updates,
+            )
 
     await reload_rules()
     return {"success": True, "data": {"id": rule_id, **updates}}
 
 
 @router.delete("/alert-rules/{rule_id}")
-async def delete_alert_rule(rule_id: str):
+async def delete_alert_rule(rule_id: str, user: CurrentUser = Depends(require_project_editor)):
     async with engine.begin() as conn:
         result = await conn.execute(
             text("DELETE FROM alert_rules WHERE id = :id"), {"id": rule_id}
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Alert rule not found")
+        await audit(
+            conn,
+            action="alert_rule.deleted",
+            actor_user_id=user.id,
+            resource_type="alert_rule",
+            resource_id=rule_id,
+        )
 
     await reload_rules()
     return {"success": True, "data": {"deleted": rule_id}}
 
 
 @router.patch("/alert-rules/{rule_id}/toggle")
-async def toggle_alert_rule(rule_id: str):
+async def toggle_alert_rule(rule_id: str, user: CurrentUser = Depends(require_project_editor)):
     async with engine.begin() as conn:
         existing = (await conn.execute(
             text("SELECT enabled FROM alert_rules WHERE id = :id"), {"id": rule_id}
@@ -225,6 +253,14 @@ async def toggle_alert_rule(rule_id: str):
         await conn.execute(
             text("UPDATE alert_rules SET enabled = :enabled WHERE id = :id"),
             {"enabled": new_val, "id": rule_id},
+        )
+        await audit(
+            conn,
+            action="alert_rule.toggled",
+            actor_user_id=user.id,
+            resource_type="alert_rule",
+            resource_id=rule_id,
+            details={"enabled": new_val},
         )
 
     await reload_rules()

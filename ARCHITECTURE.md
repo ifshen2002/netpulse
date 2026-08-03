@@ -1,651 +1,392 @@
 # ARCHITECTURE.md — NetPulse System Design
 
 > Highest-priority source of truth. All other documents defer to this one.
-> Implementation contracts are included here. No separate CONTRACTS.md exists.
+> Implementation contracts are included here.
 
-\---
+---
 
-# 0\. \[V2] Architecture Revision Notice
+# PART I — V3 PLATFORM ARCHITECTURE (PRIMARY)
 
-> This section extends the original architecture.
-> It does not replace the original architecture.
->
-> Existing implementation remains valid unless explicitly marked as:
->
-> - \\\[DEPRECATED]
-> - \\\[SUPERSEDED]
-> - \\\[LEGACY]
-> - \\\[REMOVE IN V2]
->
-> All migration work must preserve compatibility wherever practical.
+## 1. System definition
 
-### Why this revision exists
+NetPulse is a multi-tenant production observability platform. It registers servers and endpoints, executes health and reachability checks on a fixed cadence, collects evidence, detects abnormal conditions, notifies responsible people through in-app notifications, and coordinates incident response.
 
-Supervisor feedback identified a mismatch between the project positioning and the actual monitoring model.
+The current deployment is a single-instance demonstration using the platform runtime itself as a managed server, with public endpoints demonstrating outbound link health. The production target is identical in architecture, differing only in scale (more targets, more users) and deployment hardening (TLS, secrets management, backups).
 
-The original architecture successfully demonstrates:
+### 1.1 Production enrollment flow (design contract, not yet implemented)
 
-* realtime telemetry
-* alerting
-* incidents
-* chaos injection
-* CI/CD
+Enrolling a production server requires establishing trust:
 
-However, the primary monitored entity in V1 is Node, while the V2 direction must focus on:
+1. Operator creates an enrollment token from the NetPulse dashboard (scoped to a project).
+2. Token is deployed to the target server via config management, orchestration, or manual bootstrap.
+3. A lightweight agent (future) presents the token to `POST /api/enroll`, exchanges it for a credential, and begins reporting.
+4. The platform rejects anonymous metric submissions — every data point is traceable to a registered credential.
 
-* Probe
-* Endpoint
-* Link
-* Telemetry
-* Packet Evidence
+Until agents are implemented, the platform runtime performs checks directly. No remote shell access or arbitrary command execution is ever granted.
 
-### V1 versus V2
+## 2. Tenancy and identity model
 
-V1 is the legacy model and remains supported for compatibility.
+### 2.1 Entities
 
-V2 is the primary architecture direction.
+| Entity | Purpose |
+|---|---|
+| User | Registered identity with email, display name, password hash |
+| Organization | Top-level tenancy boundary; groups projects |
+| Project | Resource scope for targets, checks, alerts, incidents |
+| Membership | User → Project role binding (viewer / editor) |
+| AuthSession | Opaque bearer token, SHA-256 hashed in DB |
+| AccessRequest | User-submitted ticket requesting project access |
+| AuditLog | Immutable record of every privileged action |
+| NotificationSubscription | User preference for alert delivery |
+| InAppNotification | Delivered notification with read/ack/resolve lifecycle |
 
-### Migration principle
+### 2.2 Roles
 
-The system must prefer real network evidence over synthetic metric generation whenever technically possible.
+| Role | Access |
+|---|---|
+| `platform_admin` | Manage users, organizations, projects, access requests, role grants, platform policy. Implicit read access to everything. |
+| `viewer` | Read-only: dashboards, configuration, alerts, incidents, evidence, audit logs. No mutations. |
+| `editor` | Viewer + manage project resources: create/update/delete targets, configure alert rules, manage lab chaos, acknowledge incidents. All mutations audited. |
 
-All displayed metrics must be explainable, traceable, and grounded in a concrete probe action or derived aggregation of probe results.
+### 2.3 Access request workflow
 
-\---
-
-# 1\. System Definition
-
-**NetPulse** monitors three nodes in the legacy model:
-
-* **Node-1**: read-only host observer (real psutil metrics)
-* **Node-2 / Node-3**: synthetic cloud service nodes (simulator-generated, chaos-capable)
-
-**\[V2] Primary monitoring model:** NetPulse also supports a link-centric probe model:
-
-* **Probe**: a first-class measurement agent that originates telemetry
-* **Endpoint**: a real, reachable target such as a public DNS or HTTP endpoint
-* **Link**: a source-to-target probe path
-* **Packet Evidence**: a compact, structured representation of a real probe packet and its response
-
-No real physical network devices. No auth. Single VM deployment.
-
-**\[LEGACY]** Node monitoring remains available as a compatibility layer and demo fallback.
-
-**\[V2]** Link monitoring is the primary operational view.
-
-\---
-
-# 2\. Locked Stack Decisions
-
-|Concern|Decision|
-|-|-|
-|Frontend|React + Recharts + TailwindCSS + Zustand|
-|Backend|FastAPI monolith, layered internally|
-|Realtime|WebSocket + in-memory broadcast manager|
-|Cache|Redis, latest metrics per probe/link plus latest legacy node metrics|
-|DB|PostgreSQL, source of truth|
-|Scheduler|Single APScheduler instance|
-|Deployment|Docker Compose, single VM|
-|Auth|None (out of scope)|
-|Simulated nodes|Generated inside backend simulator module|
-|Chaos model|\[LEGACY] Overlay only for V1; \[V2] isolated network chaos for probe traffic|
-|Incident model|One Incident contains many Alerts|
-|Chaos recovery|Registry mechanism, recover\_all clears registry|
-|Node status|green / yellow / red / gray|
-|Metrics retention|72 hours|
-|Alert dedup|60-second cooldown per (node\_id, alert\_type) or per (probe\_id, alert\_type) in V2|
-|Incident auto-close|3 consecutive clean evaluations|
-|Packet loss sim|\[LEGACY] deterministic overlay simulation; \[V2] derived from real probe outcomes|
-|Burst mode|Reporting frequency increase only (5s → 1s) in V1; probe sampling remains 5s default in V2|
-|Docker logging|Rotation required on all containers|
-
-\---
-
-# 3\. System Architecture
-
-```text
-Browser
-  React Dashboard (Recharts + TailwindCSS + Zustand)
-       │
-       │ HTTP REST + WebSocket
-       ▼
-    Nginx
-      /api  → backend:8000
-      /ws   → backend:8000
-      /     → frontend:3000
-       │
-       ▼
-  FastAPI Backend
-  ┌──────────────────────────────────────────────────────────┐
-  │ routers/      services/        scheduler/                │
-  │ - nodes       - monitoring     APScheduler              │
-  │ - metrics     - alerting       5s collect               │
-  │ - alerts      - incident       1s push                  │
-  │ - incidents   - chaos          15s hb chk               │
-  │ - chaos       - simulator      \\\[V2] probe, endpoint     │
-  │ - websocket   - telemetry      \\\[V2] packet evidence     │
-  └──────────────────────────────────────────────────────────┘
-                 │
-              Redis (cache only)
-              PostgreSQL (source of truth)
+```
+User registers → browses project catalog → submits access request (project + role + reason)
+  → platform_admin reviews → approves or rejects
+    → approved: membership created with requested role
+    → rejected: request closed, no membership created
+  → audit log records every step
 ```
 
-**\[V2] Architecture intent:** the backend remains a FastAPI monolith, but the domain model shifts from node-centric simulation to probe-centric real telemetry.
+### 2.4 Authentication contract
 
-**\[V2] No new infrastructure services are introduced.** The project continues to use the existing deployment stack.
+- Passwords: salted scrypt hash (N=16384, r=8, p=1), stored as `scrypt$N$r$p$salt_b64$digest_b64`.
+- Sessions: 256-bit opaque token (`secrets.token_urlsafe(48)`), SHA-256 hash stored in `auth_sessions.token_hash`, expiry default 7 days.
+- Every authenticated request carries `Authorization: Bearer <token>`.
+- Project context: `X-Project-ID` header from the browser.
+- Logout revokes the session (sets `revoked_at`).
+- First registered user becomes bootstrap `platform_admin`.
 
-\---
+## 3. Notification system
 
-# 4\. Module Boundaries
+### 3.1 Subscription model
 
-## simulator.py
+Users subscribe to alerts by:
+- Project (required)
+- Resource type (endpoint, node — or ANY)
+- Severity (warning, critical — or ANY)
 
-* Generates baseline fake metrics for Node-2 and Node-3
-* Values within normal operating ranges
-* Exposes node on/off toggle and burst mode
-* **MUST NOT import chaos.py**
-* **MUST NOT know about chaos state**
+When an alert fires, the platform evaluates all subscriptions for that project. Every matching subscriber receives an in-app notification.
 
-**\[LEGACY]** This module remains valid for Node View compatibility.
+### 3.2 Notification lifecycle
 
-**\[V2]** simulator.py is no longer the primary telemetry source for the main dashboard.
+```
+unread → read → acknowledged → resolved
+```
 
-## chaos.py
+- `unread`: delivered, not yet seen
+- `read`: user has viewed the notification
+- `acknowledged`: user has explicitly acknowledged (for critical alerts)
+- `resolved`: underlying alert/incident is resolved, notification auto-resolved
 
-* Maintains chaos registry in memory
-* `apply\\\_overlay(raw\\\_metrics)` is the ONLY mutation point
-* **MUST NOT generate baseline metrics**
-* **MUST NOT import simulator.py**
+### 3.3 Delivery
 
-**\[LEGACY]** This module remains the legacy overlay path.
+Notifications are delivered via WebSocket (`notification_created` event) for real-time display and stored in PostgreSQL for persistence. The notification center in the frontend polls on mount and receives live updates.
 
-**\[V2]** A new isolated network chaos service may be introduced separately for probe traffic. The legacy overlay pipeline must not be repurposed into the new probe pipeline.
+External channels (email, SMS, webhook) are out of scope for the first platform release.
 
-## Probe telemetry modules \[V2]
+## 4. Authorization enforcement
 
-* Probe collection must be isolated from the legacy node simulator
-* Probe traffic must be generated as real network requests
-* Packet Evidence must be derived from actual probe runs
-* Packet Evidence must not depend on passive sniffing
+### 4.1 Route categories
 
-## Pipeline (never reverse this)
+| Category | Required permission |
+|---|---|
+| Registration, login, logout, health | None (public) |
+| Read routes (GET endpoints, alerts, incidents, alert-rules, nodes, metrics, audit-logs) | Authenticated + project member |
+| Mutation routes (POST/PUT/PATCH/DELETE on resources) | Authenticated + project editor |
+| Admin routes (user/org/project/access-request management) | platform_admin |
+| WebSocket | Authenticated + project member |
 
-### \[LEGACY] V1 pipeline
+### 4.2 Data isolation
 
-```text
+Every query for monitoring resources MUST filter by `project_id` from the `X-Project-ID` header. No cross-project data leakage. `platform_admin` may optionally query across projects for audit purposes.
+
+### 4.3 Audit requirement
+
+Every approval, role change, resource creation, resource deletion, configuration change, and destructive operation creates an AuditLog record with: actor, action, resource type, resource ID, organization, project, details, timestamp.
+
+## 5. API contracts (V3 additions)
+
+All APIs use the standard envelope:
+```json
+{"success": true, "data": {}}
+{"success": false, "error": {"code": "string", "message": "string"}}
+```
+
+### 5.1 Identity endpoints (implemented)
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/api/auth/register` | None | Create user; first user = platform_admin |
+| POST | `/api/auth/login` | None | Create session, return token |
+| POST | `/api/auth/logout` | User | Revoke session |
+| GET | `/api/auth/me` | User | Current user info |
+| POST | `/api/admin/organizations` | Admin | Create organization |
+| POST | `/api/admin/projects` | Admin | Create project |
+| GET | `/api/projects` | User | List my projects |
+| GET | `/api/projects/catalog` | User | All projects (for requesting access) |
+| POST | `/api/access-requests` | User | Submit access request |
+| GET | `/api/access-requests/mine` | User | My access requests |
+| GET | `/api/admin/access-requests` | Admin | Pending requests |
+| POST | `/api/admin/access-requests/{id}/review` | Admin | Approve/reject |
+| GET | `/api/audit-logs` | User | Audit trail (scoped) |
+
+### 5.2 Notification endpoints (to implement)
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/api/notifications` | User | List my notifications (paginated, filterable by status) |
+| PATCH | `/api/notifications/{id}/read` | User | Mark as read |
+| PATCH | `/api/notifications/{id}/acknowledge` | User | Acknowledge |
+| GET | `/api/subscriptions` | User | List my subscriptions |
+| POST | `/api/subscriptions` | User | Create subscription |
+| DELETE | `/api/subscriptions/{id}` | User | Remove subscription |
+
+### 5.3 WebSocket events (V3 additions)
+
+#### notification_created
+```json
+{"type": "notification_created", "notification_id": "uuid", "title": "...", "body": "...", "severity": "critical", "alert_id": "uuid", "incident_id": "uuid", "project_id": "uuid", "created_at": "..."}
+```
+
+## 6. Database schema (V3 additions)
+
+### users
+```sql
+id VARCHAR PRIMARY KEY, email VARCHAR UNIQUE NOT NULL,
+password_hash VARCHAR NOT NULL, display_name VARCHAR NOT NULL,
+is_platform_admin BOOLEAN DEFAULT FALSE, is_active BOOLEAN DEFAULT TRUE,
+created_at TIMESTAMPTZ
+```
+
+### organizations
+```sql
+id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL,
+created_by VARCHAR REFERENCES users(id), created_at TIMESTAMPTZ
+```
+
+### projects
+```sql
+id VARCHAR PRIMARY KEY, organization_id VARCHAR REFERENCES organizations(id),
+name VARCHAR NOT NULL, created_at TIMESTAMPTZ,
+UNIQUE (organization_id, name)
+```
+
+### memberships
+```sql
+id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES users(id),
+organization_id VARCHAR REFERENCES organizations(id),
+project_id VARCHAR REFERENCES projects(id),
+role VARCHAR NOT NULL CHECK (role IN ('viewer', 'editor')),
+created_at TIMESTAMPTZ,
+UNIQUE (user_id, project_id)
+```
+
+### auth_sessions
+```sql
+id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES users(id),
+token_hash VARCHAR UNIQUE NOT NULL, expires_at TIMESTAMPTZ,
+revoked_at TIMESTAMPTZ NULL, created_at TIMESTAMPTZ
+```
+
+### access_requests
+```sql
+id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES users(id),
+organization_id VARCHAR REFERENCES organizations(id),
+project_id VARCHAR REFERENCES projects(id),
+requested_role VARCHAR NOT NULL CHECK (role IN ('viewer', 'editor')),
+reason TEXT, status VARCHAR NOT NULL CHECK (status IN ('pending','approved','rejected')),
+reviewer_id VARCHAR REFERENCES users(id), review_note TEXT,
+created_at TIMESTAMPTZ, reviewed_at TIMESTAMPTZ NULL
+-- Partial unique index: (user_id, project_id) WHERE status = 'pending'
+```
+
+### audit_logs
+```sql
+id VARCHAR PRIMARY KEY, actor_user_id VARCHAR REFERENCES users(id),
+organization_id VARCHAR, project_id VARCHAR,
+action VARCHAR NOT NULL, resource_type VARCHAR NOT NULL,
+resource_id VARCHAR, details JSONB DEFAULT '{}',
+created_at TIMESTAMPTZ
+-- Index: (project_id, created_at)
+```
+
+### notification_subscriptions
+```sql
+id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES users(id),
+project_id VARCHAR REFERENCES projects(id) NOT NULL,
+resource_type VARCHAR,  -- 'probe','endpoint','node', or NULL = all
+severity VARCHAR,         -- 'warning','critical', or NULL = all
+enabled BOOLEAN DEFAULT TRUE,
+created_at TIMESTAMPTZ,
+UNIQUE (user_id, project_id, resource_type, severity)
+```
+
+### in_app_notifications
+```sql
+id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES users(id),
+alert_id VARCHAR REFERENCES alerts(id),
+incident_id VARCHAR REFERENCES incidents(id),
+project_id VARCHAR REFERENCES projects(id),
+title VARCHAR NOT NULL, body TEXT,
+severity VARCHAR NOT NULL CHECK (severity IN ('warning','critical')),
+status VARCHAR NOT NULL DEFAULT 'unread'
+  CHECK (status IN ('unread','read','acknowledged','resolved')),
+created_at TIMESTAMPTZ, read_at TIMESTAMPTZ NULL,
+acknowledged_at TIMESTAMPTZ NULL, resolved_at TIMESTAMPTZ NULL
+-- Index: (user_id, status, created_at)
+```
+
+## 7. Production deployment topology
+
+```
+Browser → HTTPS (TLS) → Nginx → /api  → backend:8000
+                                  /ws   → backend:8000
+                                  /     → frontend:3000
+
+Backend: FastAPI monolith
+  - Identity & auth (services/auth.py, routers/auth.py)
+  - Notification engine (services/notifications.py, routers/notifications.py)
+  - Monitoring (services/monitoring.py, services/probe.py)
+  - Alerting (services/alerting.py)
+  - Incident management (services/incident.py)
+  - Scheduling (scheduler.py — single APScheduler)
+  - Data: PostgreSQL (source of truth) + Redis (latest-value cache)
+
+Single-instance constraints:
+  - In-memory WebSocket broadcast (not horizontally scalable)
+  - In-process APScheduler (not redundant)
+  - Replace with Redis Pub/Sub + external scheduler before scaling beyond 1 instance
+```
+
+## 8. Stack decisions (locked)
+
+| Concern | Decision |
+|---|---|
+| Frontend | React + Recharts + TailwindCSS + Zustand |
+| Backend | FastAPI monolith, layered internally |
+| Realtime | WebSocket + in-memory broadcast manager |
+| Cache | Redis, latest metrics + evidence per endpoint/node |
+| DB | PostgreSQL, source of truth |
+| Scheduler | Single APScheduler instance |
+| Deployment | Docker Compose, single VM |
+| Auth | Opaque session token (SHA-256 hashed), scrypt passwords |
+| RBAC | platform_admin / viewer / editor, server-side enforcement |
+| Notifications | In-app only for first release; WebSocket delivery + DB persistence |
+| Simulated nodes | Legacy compatibility layer; labeled as lab/demo |
+| Chaos model | [LEGACY] Overlay for V1 nodes; [V2] Isolated tc netem for endpoints; both labeled as lab |
+| Incident model | One Incident contains many Alerts |
+| Chaos recovery | Registry mechanism; recover_all clears registry |
+| Endpoint/node status | green / yellow / red / gray |
+| Metrics retention | 72 hours |
+| Alert dedup | 60-second cooldown per (endpoint_id/node_id, alert_type) |
+| Incident auto-close | 3 consecutive clean evaluations |
+| Audit retention | Indefinite (compliance) |
+
+---
+
+# PART II — V2 ENDPOINT ARCHITECTURE (ACTIVE)
+
+> [2026-08-04] Probes and links tables were merged into endpoints (migration 013). Endpoint is the single source of truth for monitoring targets.
+
+## V2.1 Endpoint telemetry model
+
+The system prefers real network evidence over synthetic metric generation. Every displayed metric must be traceable to actual probe activity.
+
+### Endpoint schema
+```
+endpoints: id, name, target_host, source_ip, protocol, status, last_seen, enabled, project_id, created_at
+```
+
+### V2 Pipeline (never reverse)
+```
+probe.py → ICMP ping → packet_evidence → normalization → cache/storage → display
+                                                                       ↓
+                                                            alert_rules evaluation
+                                                                       ↓
+                                                            alerts → incidents → notifications
+```
+
+## V2.2 WebSocket events (active)
+
+| Event | Fields |
+|---|---|
+| `endpoint_metric_update` | endpoint_id, endpoint, latency_ms, packet_loss_pct, availability_pct, status, timestamp |
+| `packet_evidence` | evidence_id, endpoint_id, endpoint, protocol, src_ip, dst_ip, ttl, packet_size_bytes, icmp_seq, rtt_ms, timestamp, raw_output |
+| `endpoint_status_changed` | endpoint_id, status, previous_status, timestamp |
+| `alert_fired` | alert_id, incident_id, endpoint_id, alert_type, message, evidence_id, timestamp |
+| `incident_opened` / `incident_closed` | incident_id, endpoint_id, title, timestamp |
+
+## V2.3 Database tables
+
+`endpoints`, `probe_metrics` (historical name), `packet_evidence`, `alert_rules`, `alerts`, `incidents`
+
+All carry `project_id` for tenant isolation. Scheduler writes `project_id` on every INSERT. `services/auth.py:project_clause()` provides asyncpg-safe filtering across all routers.
+
+## V2.4 Alert evaluation
+
+Rule-based stateful evaluation via `alert_rules` table — no legacy hardcoded thresholds. Rules define `metric`, `operator`, `threshold`, `severity`. Per-endpoint state-based: condition persists → no re-fire; resolves → rule alert resolved; incident closes when ALL rules for the endpoint clear.
+
+Dedup key: `(endpoint_id, rule_id)`, cooldown 60s, recovery streak 3.
+
+## V2.5 Isolated network chaos (lab feature)
+
+- `tc netem` inside container, u32 filter on destination IP
+- One active injection at a time
+- Value bounds: latency 10-500ms, loss 1-50%
+- `cap_add: NET_ADMIN` on backend container
+- Must be visually separated from production telemetry
+
+---
+
+# PART III — V1 NODE ARCHITECTURE (LEGACY COMPATIBILITY)
+
+> V1 Node View remains operational but is now legacy. Node-2 and Node-3 are synthetic/demo only.
+
+## V3.1 Legacy unified metrics schema
+```json
+{
+  "node_id": "string", "timestamp": "ISO8601 UTC",
+  "cpu": 0.0, "memory": 0.0, "disk": 0.0,
+  "latency_ms": 0.0, "packet_loss_pct": 0.0,
+  "status": "green|yellow|red|gray"
+}
+```
+
+## V3.2 Legacy pipeline
+```
 simulator.py → baseline metrics → chaos.py overlay → display/storage
 ```
 
-### \[V2] Probe pipeline
+## V3.3 Legacy alert thresholds
 
-```text
-probe.py → endpoint request → telemetry extraction → packet evidence → normalization → cache/storage → display
+| Condition | Alert Type |
+|---|---|
+| CPU > 80% | cpu_high |
+| Latency > 500ms | latency_spike |
+| No heartbeat 15s | heartbeat_timeout |
+
+## V3.4 Host safety (non-negotiable)
+
+Node-1 is strictly read-only. Chaos operates ONLY on synthetic nodes via overlay in the legacy path, or on isolated probe containers via tc netem in the V2 path. The host VM must never be intentionally destabilized.
+
+---
+
+# PART IV — CROSS-CUTTING RULES
+
+## File structure
+
 ```
-
-\---
-
-# 5\. Host Safety — Non-Negotiable
-
-Node-1 is strictly read-only. Forbidden on Node-1:
-
-* CPU stress
-* memory pressure
-* network/DNS/firewall modification
-* any chaos injection
-
-Chaos operates ONLY on synthetic nodes via overlay metrics in the legacy path. The VM must never be intentionally destabilized.
-
-**\[V2]** Real network chaos, if used, must be confined to isolated probe environments and must not modify host networking directly.
-
-\---
-
-# 6\. Unified Metrics Schema
-
-Every metrics object from any node MUST match exactly in the legacy model:
-
-```json
-{
-  "node\\\_id": "string",
-  "timestamp": "ISO8601 UTC",
-  "cpu": 0.0,
-  "memory": 0.0,
-  "disk": 0.0,
-  "latency\\\_ms": 0.0,
-  "packet\\\_loss\\\_pct": 0.0,
-  "status": "green|yellow|red|gray"
-}
-```
-
-Rules: no null fields, all values numeric, bounded (cpu/memory/disk: 0-100, latency\_ms: ≥0, packet\_loss\_pct: 0-100), no NaN, no negative percentages.
-
-Display metrics always = `chaos.apply\\\_overlay(raw\\\_metrics)` in the legacy pipeline. Raw metrics never modified in-place.
-
-## \[V2] Probe telemetry schema
-
-All probe telemetry objects MUST be explainable and derived from real probe activity:
-
-```json
-{
-  "probe\\\_id": "string",
-  "endpoint": "string",
-  "protocol": "icmp",
-  "timestamp": "ISO8601 UTC",
-  "latency\\\_ms": 0.0,
-  "packet\\\_loss\\\_pct": 0.0,
-  "jitter\\\_ms": 0.0,
-  "availability\\\_pct": 0.0,
-  "packet\\\_size\\\_bytes": 0,
-  "src\\\_ip": "string",
-  "dst\\\_ip": "string",
-  "ttl": 0,
-  "icmp\\\_seq": 0,
-  "status": "green|yellow|red|gray"
-}
-```
-
-### \[V2] Metric interpretation rules
-
-The following values must remain directly explainable:
-
-* **latency\_ms**: derived from observed round-trip time of probe packets
-* **packet\_loss\_pct**: derived from unanswered probes within a defined window
-* **jitter\_ms**: derived from variation in round-trip time across a window
-* **availability\_pct**: derived from successful probes divided by total probes
-* **packet\_size\_bytes**: derived from the actual probe packet size
-* **src\_ip / dst\_ip**: derived from the real request path
-* **ttl**: derived from the packet metadata or response metadata
-* **icmp\_seq**: derived from the ICMP sequence number
-
-No value may be generated by arbitrary randomization in the V2 telemetry path.
-
-\---
-
-# 7\. WebSocket Event Schemas
-
-Backend pushes normalized events only — no full snapshots.
-
-### metric\_update
-
-```json
-{"type": "metric\\\_update", "node\\\_id": "node-1", "cpu": 45.2, "memory": 62.1, "disk": 38.0, "latency\\\_ms": 12.0, "packet\\\_loss\\\_pct": 0.0, "status": "green", "timestamp": "..."}
-```
-
-### alert\_fired
-
-```json
-{"type": "alert\\\_fired", "alert\\\_id": "uuid", "node\\\_id": "node-1", "alert\\\_type": "cpu\\\_high", "message": "CPU at 82%", "timestamp": "..."}
-```
-
-### incident\_opened
-
-```json
-{"type": "incident\\\_opened", "incident\\\_id": "uuid", "title": "...", "timestamp": "..."}
-```
-
-### incident\_closed
-
-```json
-{"type": "incident\\\_closed", "incident\\\_id": "uuid", "timestamp": "..."}
-```
-
-### node\_status\_changed
-
-```json
-{"type": "node\\\_status\\\_changed", "node\\\_id": "node-2", "status": "red", "timestamp": "..."}
-```
-
-**\[V2] Probe event additions**
-
-### probe\_metric\_update
-
-```json
-{"type": "probe\\\_metric\\\_update", "probe\\\_id": "probe-a", "endpoint": "8.8.8.8", "latency\\\_ms": 12.4, "packet\\\_loss\\\_pct": 0.0, "jitter\\\_ms": 1.2, "availability\\\_pct": 100, "status": "green", "timestamp": "..."}
-```
-
-### packet\_evidence
-
-```json
-{"type": "packet\\\_evidence", "probe\\\_id": "probe-a", "endpoint": "8.8.8.8", "protocol": "icmp", "src\\\_ip": "10.0.0.5", "dst\\\_ip": "8.8.8.8", "ttl": 117, "packet\\\_size\\\_bytes": 64, "icmp\\\_seq": 218, "rtt\\\_ms": 12.4, "timestamp": "..."}
-```
-
-### link\_status\_changed
-
-```json
-{"type": "link\\\_status\\\_changed", "link\\\_id": "link-a", "status": "red", "timestamp": "..."}
-```
-
-Zustand stores handle each event independently. No snapshot replacement.
-
-**\[V2]** Node events remain for compatibility, and probe events are added alongside them.
-
-\---
-
-# 8\. Database Schema
-
-### nodes
-
-```sql
-id VARCHAR PRIMARY KEY, name VARCHAR, type VARCHAR,
-status VARCHAR, last\\\_seen TIMESTAMP, created\\\_at TIMESTAMP
-```
-
-### metrics
-
-```sql
-id SERIAL PRIMARY KEY, node\\\_id VARCHAR REFERENCES nodes(id),
-timestamp TIMESTAMP, cpu FLOAT, memory FLOAT, disk FLOAT,
-latency\\\_ms FLOAT, packet\\\_loss\\\_pct FLOAT, status VARCHAR
--- Index: (node\\\_id, timestamp)
--- Retention: delete rows older than 72h
-```
-
-### alerts
-
-```sql
-id UUID PRIMARY KEY, node\\\_id VARCHAR REFERENCES nodes(id),
-incident\\\_id UUID REFERENCES incidents(id) NULL,
-alert\\\_type VARCHAR, message VARCHAR,
-fired\\\_at TIMESTAMP, resolved\\\_at TIMESTAMP NULL
-```
-
-### incidents
-
-```sql
-id UUID PRIMARY KEY, title VARCHAR, status VARCHAR,
-opened\\\_at TIMESTAMP, closed\\\_at TIMESTAMP NULL
-```
-
-### chaos\_events
-
-```sql
-id UUID PRIMARY KEY, chaos\\\_type VARCHAR, node\\\_id VARCHAR,
-started\\\_at TIMESTAMP, ended\\\_at TIMESTAMP NULL, config JSONB
-```
-
-## \[V2] Additional tables
-
-### probes
-
-```sql
-id VARCHAR PRIMARY KEY,
-name VARCHAR,
-protocol VARCHAR,
-endpoint VARCHAR,
-status VARCHAR,
-last\\\_seen TIMESTAMP,
-created\\\_at TIMESTAMP
-```
-
-### links
-
-```sql
-id VARCHAR PRIMARY KEY,
-probe\\\_id VARCHAR REFERENCES probes(id),
-endpoint VARCHAR,
-protocol VARCHAR,
-status VARCHAR,
-last\\\_seen TIMESTAMP,
-created\\\_at TIMESTAMP
-```
-
-### probe\_metrics
-
-```sql
-id SERIAL PRIMARY KEY,
-probe\\\_id VARCHAR REFERENCES probes(id),
-link\\\_id VARCHAR REFERENCES links(id),
-timestamp TIMESTAMP,
-latency\\\_ms FLOAT,
-packet\\\_loss\\\_pct FLOAT,
-jitter\\\_ms FLOAT,
-availability\\\_pct FLOAT,
-packet\\\_size\\\_bytes INT,
-src\\\_ip VARCHAR,
-dst\\\_ip VARCHAR,
-ttl INT,
-icmp\\\_seq INT,
-status VARCHAR
--- Index: (probe\\\_id, timestamp)
--- Index: (link\\\_id, timestamp)
-```
-
-### packet\_evidence
-
-```sql
-id UUID PRIMARY KEY,
-probe\\\_id VARCHAR REFERENCES probes(id),
-link\\\_id VARCHAR REFERENCES links(id),
-protocol VARCHAR,
-src\\\_ip VARCHAR,
-dst\\\_ip VARCHAR,
-ttl INT,
-packet\\\_size\\\_bytes INT,
-icmp\\\_seq INT,
-rtt\\\_ms FLOAT,
-timestamp TIMESTAMP
-```
-
-### \[V2] Storage rule
-
-Redis stores the latest probe metric and latest packet evidence per probe or link.
-
-PostgreSQL stores history, aggregation inputs, incidents, and packet evidence history.
-
-\---
-
-# 9\. Alert \& Incident Rules
-
-### Alert Thresholds
-
-|Condition|Alert Type|
-|-|-|
-|CPU > 80%|cpu\_high|
-|Latency > 500ms|latency\_spike|
-|No heartbeat 15s|heartbeat\_timeout|
-
-### Deduplication
-
-* Key: `(node\\\_id, alert\\\_type)`
-* Cooldown: 60 seconds
-* During cooldown: no DB insert, no WebSocket broadcast
-
-### Incident Lifecycle
-
-* Opens on first non-deduplicated alert (one open incident per node max)
-* Closes only after 3 consecutive clean evaluations
-* Timeline events are append-only
-
-### Node Status Recovery
-
-* Node returns to `green` only after 3 consecutive healthy evaluations
-
-## \[V2] Probe and link alert rules
-
-### Probe thresholds
-
-|Condition|Alert Type|
-|-|-|
-|Packet loss above configured threshold|probe\_packet\_loss\_high|
-|Latency above configured threshold|probe\_latency\_high|
-|Availability below configured threshold|probe\_availability\_low|
-
-### Deduplication
-
-* Key: `(probe\\\_id, alert\\\_type)` or `(link\\\_id, alert\\\_type)`
-* Cooldown: 60 seconds
-* During cooldown: no DB insert, no WebSocket broadcast
-
-### Incident lifecycle
-
-* Opens on first non-deduplicated probe or link alert
-* Closes only after 3 consecutive clean evaluations
-* Timeline events are append-only
-
-### Recovery rule
-
-* A probe or link returns to `green` only after 3 consecutive healthy evaluations
-
-### Metric interpretation rule
-
-All thresholds must act on real telemetry values only, not on synthetic placeholders.
-
-\---
-
-# 10\. Chaos Injection
-
-### Types
-
-|Type|Effect|
-|-|-|
-|latency\_spike|latency\_ms += random(200, 800)|
-|packet\_loss|drop every 5th heartbeat|
-|cpu\_spike|cpu += injected\_value (cap 100)|
-|db\_exhaustion|simulated alert only, no real DB harm|
-|cache\_unavailable|simulated alert only, no real Redis harm|
-|recover\_all|clear entire chaos registry|
-
-### Registry pattern
-
-```python
-active\\\_chaos = {"node-2": \\\["latency\\\_spike"]}
-```
-
-`recover\\\_all()` clears registry, restores overlays, preserves historical chaos\_events rows.
-
-## \[V2] Isolated network chaos
-
-The V2 chaos model must not mutate the host network directly.
-
-### Supported V2 approach
-
-* isolated Docker network
-* isolated probe container
-* `tc netem` applied only inside the isolated environment
-* probe traffic toward endpoints is affected within the demo sandbox only
-
-### V2 supported effects
-
-|Type|Effect|
-|-|-|
-|latency\_spike|add controlled delay to probe traffic inside the isolated environment|
-|packet\_loss|introduce controlled packet loss inside the isolated environment|
-|jitter\_spike|increase RTT variance inside the isolated environment|
-|recover\_all|remove the network impairment and clear the registry|
-
-### V2 rules
-
-* Packet evidence must remain explainable
-* Chaos must remain visible in the dashboard
-* Host networking must never be modified directly
-* The host machine must not be destabilized
-* Chaos must be isolated from unrelated services
-
-**\[SUPERSEDED]** The legacy overlay-only chaos path remains documented for historical compatibility.
-
-\---
-
-# 11\. Scheduler (Single Instance)
-
-APScheduler responsibilities:
-
-* 5s: metrics collection
-* 1s: WebSocket metric push
-* 15s: heartbeat evaluation
-* periodic: alert evaluation, incident evaluation, retention cleanup (72h)
-
-**One APScheduler only. No child schedulers. No recursive scheduling.**
-
-## \[V2] Probe scheduling
-
-* 5s: probe collection is the default cadence
-* 15s / 30s / 60s / 180s: supported aggregation windows for historical views
-* Probe collection values are aggregated into historical buckets for dashboard display and analysis
-
-\---
-
-# 12\. Resource Budget
-
-|Resource|Limit|
-|-|-|
-|VM|GCP e2-micro|
-|RAM|1GB|
-|Disk|30GB|
-|Max nodes|3|
-|Max WebSocket clients|5|
-|Metrics retention|72 hours|
-
-Docker Compose services: `nginx`, `frontend`, `backend`, `redis`, `postgres`
-
-All containers MUST use log rotation:
-
-```yaml
-logging:
-  options:
-    max-size: "10m"
-    max-file: "3"
-```
-
-Startup order: postgres → redis → backend → frontend → nginx
-
-## \[V2] Capacity note
-
-No additional infrastructure services should be introduced for the V2 migration unless explicitly flagged as a new architectural dependency.
-
-\---
-
-# 13\. API Response Envelope
-
-Success: `{"success": true, "data": {}}`
-Error: `{"success": false, "error": {"code": "string", "message": "string"}}`
-
-Node IDs are locked: `node-1`, `node-2`, `node-3`
-
-## \[V2] API additions
-
-### Probe list
-
-* List configured probes
-* Show probe health and latest telemetry
-
-### Link list
-
-* List configured links
-* Show link health and latest telemetry
-
-### Packet evidence
-
-* Return the latest packet evidence per probe or link
-* Return historical packet evidence by time window
-
-### Aggregated telemetry
-
-* Return metrics grouped by 15s / 30s / 60s / 180s windows
-
-All V2 API responses must continue to use the same success/error envelope.
-
-\---
-
-# 14\. Frontend Rules
-
-* Zustand is the ONLY global state system (no Redux, no MobX)
-* WebSocket disconnect: show degraded badge, keep dashboard mounted, bounded reconnect retry
-* Charts render bounded data only, support realtime updates
-* Max 4 major dashboard panels
-
-## \[V2] Frontend behavior
-
-* Default view is Link View
-* Node View remains available as a legacy compatibility view
-* Packet Evidence must be visible in the UI
-* The UI must show a clear explanation of each metric value and its origin
-* Historical views must support 15s / 30s / 60s / 180s aggregation windows
-* The dashboard must make it obvious when a value is real telemetry versus a legacy compatibility metric
-
-\---
-
-# 15\. File Structure
-
-```text
 netpulse/
 ├── CLAUDE.md
 ├── ARCHITECTURE.md
@@ -657,42 +398,81 @@ netpulse/
 ├── backend/
 │   ├── main.py
 │   ├── db.py
-│   ├── redis\\\_client.py
+│   ├── redis_client.py
 │   ├── scheduler.py
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   ├── alembic.ini
+│   ├── alembic/
+│   │   ├── env.py
+│   │   └── versions/
+│   ├── models/
+│   │   └── __init__.py
+│   ├── schemas/
+│   │   └── __init__.py
 │   ├── routers/
-│   │   ├── nodes.py
-│   │   ├── metrics.py
+│   │   ├── auth.py          (identity, access requests, audit)
+│   │   ├── notifications.py (subscriptions, notification CRUD)
+│   │   ├── nodes.py         (V1 legacy)
+│   │   ├── metrics.py       (V1 legacy)
 │   │   ├── alerts.py
+│   │   ├── alert_rules.py
 │   │   ├── incidents.py
-│   │   ├── chaos.py
+│   │   ├── chaos.py         (V1 legacy)
+│   │   ├── netchaos.py      (V2 lab)
+│   │   ├── endpoints.py
 │   │   └── websocket.py
 │   ├── services/
+│   │   ├── auth.py          (password hashing, sessions, RBAC, audit)
+│   │   ├── notifications.py (subscription matching, delivery)
 │   │   ├── monitoring.py
 │   │   ├── simulator.py
 │   │   ├── chaos.py
 │   │   ├── alerting.py
-│   │   └── incident.py
-│   ├── models/
-│   ├── schemas/
+│   │   ├── incident.py
+│   │   ├── probe.py
+│   │   ├── netchaos.py
+│   │   └── normalization.py
 │   └── tests/
 │       ├── unit/
 │       ├── integration/
 │       ├── websocket/
-│       └── chaos/
+│       └── e2e/
 │
 ├── frontend/
 │   └── src/
+│       ├── main.jsx
 │       ├── App.jsx
+│       ├── index.css
 │       ├── store/
+│       │   ├── metricsStore.js
+│       │   └── authStore.js
 │       ├── hooks/
 │       │   └── useWebSocket.js
+│       ├── lib/
+│       │   ├── api.js
+│       │   └── time.js
 │       └── components/
-│           ├── NodeCard.jsx
-│           ├── MetricsChart.jsx
+│           ├── AuthPage.jsx
+│           ├── AccessConsole.jsx
+│           ├── NotificationCenter.jsx
+│           ├── SubscriptionManager.jsx
+│           ├── ViewSwitcher.jsx
+│           ├── SummaryBar.jsx
+│           ├── EndpointCard.jsx
+│           ├── CreateEndpointButton.jsx
+│           ├── ProbeTelemetry.jsx
+│           ├── PacketEvidencePanel.jsx
+│           ├── EvidenceInspector.jsx
+│           ├── NetworkChaosPanel.jsx
+│           ├── AlertRulesManager.jsx
 │           ├── AlertBanner.jsx
 │           ├── IncidentTimeline.jsx
+│           ├── NodeCard.jsx
+│           ├── MetricsChart.jsx
 │           ├── ChaosPanel.jsx
-│           └── NodeControls.jsx
+│           ├── NodeControls.jsx
+│           └── ErrorBoundary.jsx
 │
 ├── nginx/
 │   └── nginx.conf
@@ -704,83 +484,51 @@ netpulse/
 
 **Folder discipline: max 5 items per folder level. Keep nesting shallow.**
 
-## \[V2] File mapping
+## Resource budget
 
-* `backend/services/simulator.py` remains for legacy node simulation
-* `backend/services/chaos.py` remains for legacy overlay chaos
-* New V2 telemetry logic should be added as separate modules rather than by overloading simulator.py
-* New V2 packet evidence logic should be separated from legacy node metrics
-* New V2 link and probe services should be added without breaking the existing folder discipline
+| Resource | Limit |
+|---|---|
+| VM | GCP e2-micro |
+| RAM | 1 GB |
+| Disk | 30 GB |
+| Max WebSocket clients | 5 (demo) |
+| Metrics retention | 72 hours |
+| Audit log retention | Indefinite |
 
-\---
+## Migration safety
 
-# 16\. \[V2] Migration Contract
+Identity tables were introduced before telemetry-table ownership columns. During this interim state, identity and administrative APIs require authentication, while the project-scoping migration is in progress. The nullable `project_id` columns with bootstrap-project backfill are a compatibility bridge; they will become NOT NULL after all APIs enforce the project context.
 
-This section defines how V1 and V2 coexist during the migration.
+## V1+V2 coexistence rule
 
-## V1 behavior
+- V1 and V2 may coexist in the codebase.
+- V1 and V2 must not be mixed inside a single data path.
+- A dashboard view must clearly indicate whether it is using legacy node metrics or probe telemetry.
+- Lab/demo features (chaos, synthetic nodes) must be visually separated from production monitoring.
 
-* V1 Node View remains valid
-* V1 synthetic nodes remain valid for compatibility
-* V1 overlay chaos remains valid only for legacy demo paths
+## API response envelope (all versions)
 
-## V2 behavior
+Success: `{"success": true, "data": {}}`
+Error: `{"success": false, "error": {"code": "string", "message": "string"}}`
 
-* V2 Link View is the default operational view
-* V2 telemetry must originate from probes
-* V2 telemetry must be explainable and traceable
-* V2 packet evidence must represent actual probe-generated packets
-* V2 chaos must be isolated from the host network
+## Frontend rules
 
-## Coexistence rule
+- Zustand is the ONLY global state system
+- WebSocket disconnect: show degraded badge, keep dashboard mounted, bounded reconnect retry
+- Charts render bounded data only, support realtime updates
+- Max 4 major dashboard panels
+- Zustand selectors MUST NOT create new object/array references (use module-level frozen constants)
+- Default view is Link View; Node View is legacy compatibility
+- Lab features (chaos, synthetic nodes) visually separated from production
 
-* V1 and V2 may coexist in the codebase
-* V1 and V2 must not be mixed inside a single data path
-* A dashboard view must clearly indicate whether it is using legacy node metrics or probe telemetry
+## Scheduler (single instance)
 
-## Removal rule
+Responsibilities:
+- 5s: metrics/probe collection
+- 1s: WebSocket push
+- 15s: heartbeat evaluation
+- 5s: alert evaluation
+- On alert fire: notification delivery (match subscriptions, create notifications)
+- Periodic: retention cleanup (72h metrics), incident evaluation
 
-* Nothing in V1 should be removed unless explicitly marked \[REMOVE IN V2]
-* All removals must be justified with a migration note
-
-\---
-
-# 17\. \[V2] Acceptance Criteria
-
-The migration is complete when all of the following are true:
-
-1. Legacy Node View still works.
-2. Link View is the default dashboard mode.
-3. Three real endpoints are monitored by probes.
-4. All telemetry values are explainable from actual probe activity.
-5. Packet Evidence is visible in the dashboard.
-6. Historical aggregation works for 15s / 30s / 60s / 180s windows.
-7. Alerts and incidents still work end to end.
-8. Chaos works in an isolated environment without modifying host networking.
-9. Redis still supports latest-value caching.
-10. PostgreSQL still stores history and telemetry lineage.
-11. The codebase remains within the existing stack and file structure.
-12. The migration can be demonstrated in a recorded video.
-
-\---
-
-# 18\. \[V2] Summary of non-goals
-
-The following are not required for V2:
-
-* Prometheus
-* Grafana
-* Kafka
-* OpenTelemetry
-* Loki
-* Tempo
-* Kubernetes
-* host-level packet capture
-* passive sniffing
-* new auth system
-* new deployment topology
-
-These are intentionally out of scope unless explicitly reintroduced as a new approved dependency.
-
-
-
+**One APScheduler only. No child schedulers. No recursive scheduling.**

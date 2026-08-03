@@ -9,7 +9,7 @@ _VALID_TYPES = {
     "metric_update", "alert_fired", "incident_opened",
     "incident_closed", "node_status_changed",
     # V2
-    "probe_metric_update", "packet_evidence", "link_status_changed",
+    "endpoint_metric_update", "packet_evidence", "endpoint_status_changed",
 }
 
 

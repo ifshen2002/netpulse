@@ -18,7 +18,7 @@ export default function SummaryBar() {
   const endpoints = useMetricsStore((s) => s.endpoints)
   const alerts = useMetricsStore((s) => s.alerts)
   const incidents = useMetricsStore((s) => s.incidents)
-  const probeMetrics = useMetricsStore((s) => s.probeMetrics)
+  const endpointMetrics = useMetricsStore((s) => s.endpointMetrics)
 
   const totalEndpoints = endpoints.length
 
@@ -27,7 +27,7 @@ export default function SummaryBar() {
   const openIncidents = incidents.filter((i) => i.status === 'open').length
 
   // Average latency across all probes
-  const latencies = Object.values(probeMetrics)
+  const latencies = Object.values(endpointMetrics)
     .map((m) => m.latency_ms)
     .filter((v) => v != null && v > 0)
   const avgLatency = latencies.length > 0
@@ -35,7 +35,7 @@ export default function SummaryBar() {
     : '—'
 
   // Average availability across all probes
-  const availabilities = Object.values(probeMetrics)
+  const availabilities = Object.values(endpointMetrics)
     .map((m) => m.availability_pct)
     .filter((v) => v != null)
   const avgAvailability = availabilities.length > 0

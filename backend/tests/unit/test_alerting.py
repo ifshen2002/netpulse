@@ -24,7 +24,9 @@ def _make_metric(cpu=35.0, latency=10.0):
 
 def _mock_engine():
     conn = AsyncMock()
-    conn.execute = AsyncMock()
+    fetch_mock = MagicMock()
+    fetch_mock.fetchone.return_value = None
+    conn.execute = AsyncMock(return_value=fetch_mock)
     engine = MagicMock()
     engine.begin.return_value.__aenter__.return_value = conn
     return engine

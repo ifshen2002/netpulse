@@ -24,7 +24,7 @@ class NodeOut(BaseModel):
 class AlertOut(BaseModel):
     id: str
     node_id: str | None = None
-    probe_id: str | None = None
+    endpoint_id: str | None = None
     incident_id: str | None = None
     alert_type: str
     message: str
@@ -36,7 +36,7 @@ class IncidentOut(BaseModel):
     id: str
     title: str
     status: str
-    probe_id: str | None = None
+    endpoint_id: str | None = None
     opened_at: str
     closed_at: str | None = None
 
@@ -83,30 +83,8 @@ class EndpointUpdateIn(BaseModel):
     enabled: bool | None = None
 
 
-class ProbeOut(BaseModel):
-    id: str
-    name: str
-    protocol: str
-    endpoint: str
-    endpoint_id: str | None = None
-    status: str
-    last_seen: str | None = None
-    created_at: str | None = None
-
-
-class LinkOut(BaseModel):
-    id: str
-    probe_id: str
-    endpoint: str
-    protocol: str
-    status: str
-    last_seen: str | None = None
-    created_at: str | None = None
-
-
-class ProbeMetricOut(BaseModel):
-    probe_id: str
-    link_id: str
+class EndpointMetricOut(BaseModel):
+    endpoint_id: str
     packet_evidence_id: str
     timestamp: str
     latency_ms: float
@@ -145,8 +123,7 @@ class AlertRuleUpdateIn(BaseModel):
 
 class PacketEvidenceOut(BaseModel):
     id: str
-    probe_id: str
-    link_id: str
+    endpoint_id: str
     protocol: str
     src_ip: str
     dst_ip: str

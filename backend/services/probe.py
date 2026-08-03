@@ -1,7 +1,7 @@
-"""V2 probe execution service — real ICMP probes.
+"""V2 endpoint probe execution — real ICMP pings.
 
 [V2] Every telemetry value originates from actual probe activity.
-Packet Evidence is the source of truth for all probe metrics.
+Packet Evidence is the source of truth for all endpoint metrics.
 """
 
 import asyncio
@@ -39,7 +39,7 @@ def get_source_ip(endpoint: str) -> str:
 def _parse_ping_output(
     output: str,
     endpoint: str,
-    probe_id: str,
+    endpoint_id: str,
     src_ip: str,
     ts: datetime,
 ) -> dict:
@@ -52,7 +52,7 @@ def _parse_ping_output(
     A failed probe (no response) returns success=False with zeroed metrics.
     """
     result = {
-        "probe_id": probe_id,
+        "endpoint_id": endpoint_id,
         "endpoint": endpoint,
         "protocol": "icmp",
         "success": False,
@@ -80,7 +80,7 @@ def _parse_ping_output(
     return result
 
 
-async def run_probe(endpoint: str, probe_id: str) -> dict:
+async def run_probe(endpoint: str, endpoint_id: str) -> dict:
     """Execute a single ICMP ping probe and return structured packet evidence."""
     src_ip = get_source_ip(endpoint)
     ts = datetime.now(timezone.utc)
@@ -96,10 +96,10 @@ async def run_probe(endpoint: str, probe_id: str) -> dict:
         )
         stdout, _ = await proc.communicate()
         output = stdout.decode("utf-8", errors="replace")
-        return _parse_ping_output(output, endpoint, probe_id, src_ip, ts)
+        return _parse_ping_output(output, endpoint, endpoint_id, src_ip, ts)
     except Exception:
         return {
-            "probe_id": probe_id,
+            "endpoint_id": endpoint_id,
             "endpoint": endpoint,
             "protocol": "icmp",
             "success": False,

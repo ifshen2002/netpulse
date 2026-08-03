@@ -4,7 +4,7 @@ import { toUTC8 } from '../lib/time'
 import EvidenceInspector from './EvidenceInspector'
 
 const COLS = [
-  { key: 'probe', label: 'Probe', width: '10ch' },
+  { key: 'endpoint', label: 'Endpoint', width: '14ch' },
   { key: 'protocol', label: 'Proto', width: '6ch' },
   { key: 'src_ip', label: 'Src IP', width: '14ch' },
   { key: 'dst_ip', label: 'Dst IP', width: '14ch' },
@@ -18,18 +18,18 @@ const COLS = [
 export default function PacketEvidencePanel() {
   const packetEvidence = useMetricsStore((s) => s.packetEvidence)
   const fetchEvidenceTimeline = useMetricsStore((s) => s.fetchEvidenceTimeline)
-  const probeIds = Object.keys(packetEvidence).sort()
+  const endpointIds = Object.keys(packetEvidence).sort()
   const [expanded, setExpanded] = useState(null)
   const fetchedRef = useRef({})
 
   useEffect(() => {
-    for (const pid of probeIds) {
-      if (!fetchedRef.current[pid]) {
-        fetchedRef.current[pid] = true
-        fetchEvidenceTimeline(pid, 20)
+    for (const eid of endpointIds) {
+      if (!fetchedRef.current[eid]) {
+        fetchedRef.current[eid] = true
+        fetchEvidenceTimeline(eid, 20)
       }
     }
-  }, [probeIds, fetchEvidenceTimeline])
+  }, [endpointIds, fetchEvidenceTimeline])
 
   return (
     <div
@@ -38,7 +38,7 @@ export default function PacketEvidencePanel() {
     >
       <h2>Packet Evidence</h2>
 
-      {probeIds.length === 0 ? (
+      {endpointIds.length === 0 ? (
         <p className="text-xs" style={{ color: 'var(--gray)' }}>
           Waiting for probe data...
         </p>
@@ -73,15 +73,15 @@ export default function PacketEvidencePanel() {
               </tr>
             </thead>
             <tbody>
-              {probeIds.map((pid) => {
-                const e = packetEvidence[pid]
-                const isExpanded = expanded === pid
+              {endpointIds.map((eid) => {
+                const e = packetEvidence[eid]
+                const isExpanded = expanded === eid
 
                 return (
-                  <tr key={pid} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <tr key={eid} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td className="px-1 py-1">
                       <button
-                        onClick={() => setExpanded(isExpanded ? null : pid)}
+                        onClick={() => setExpanded(isExpanded ? null : eid)}
                         className="rounded text-xs font-bold"
                         style={{
                           background: isExpanded ? 'var(--accent-bg)' : 'transparent',
@@ -99,7 +99,7 @@ export default function PacketEvidencePanel() {
                       </button>
                     </td>
                     <td className="px-1.5 py-1" style={{ color: 'var(--text-h)', fontWeight: 500 }}>
-                      {pid}
+                      {eid}
                     </td>
                     <td className="px-1.5 py-1" style={{ color: 'var(--accent)' }}>
                       {e.protocol?.toUpperCase()}
@@ -134,7 +134,7 @@ export default function PacketEvidencePanel() {
           {/* Expanded Evidence Inspector for selected probe */}
           {expanded != null && (
             <div style={{ marginTop: 0 }}>
-              <EvidenceInspector probeId={expanded} />
+              <EvidenceInspector endpointId={expanded} />
             </div>
           )}
         </div>

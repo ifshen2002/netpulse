@@ -1,16 +1,19 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy import text
 
 from db import engine
+from services.auth import CurrentUser, project_clause, require_project_member
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
 
 @router.get("")
-async def list_nodes():
+async def list_nodes(user: CurrentUser = Depends(require_project_member), project_id: str | None = Header(default=None, alias="X-Project-ID")):
+    clause, params = project_clause(project_id)
     async with engine.connect() as conn:
         rows = await conn.execute(
-            text("SELECT id, name, type, status, last_seen, created_at FROM nodes ORDER BY id")
+            text(f"SELECT id, name, type, status, last_seen, created_at FROM nodes WHERE 1=1{clause} ORDER BY id"),
+            params,
         )
         nodes = [
             {

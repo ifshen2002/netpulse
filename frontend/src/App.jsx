@@ -16,6 +16,12 @@ import PacketEvidencePanel from './components/PacketEvidencePanel'
 import NetworkChaosPanel from './components/NetworkChaosPanel'
 import AlertRulesManager from './components/AlertRulesManager'
 import SummaryBar from './components/SummaryBar'
+import AuthPage from './components/AuthPage'
+import AccessConsole from './components/AccessConsole'
+import NotificationCenter from './components/NotificationCenter'
+import ProjectSelector from './components/ProjectSelector'
+import SubscriptionManager from './components/SubscriptionManager'
+import useAuthStore from './store/authStore'
 
 const NODE_IDS = ['node-1', 'node-2', 'node-3']
 
@@ -48,7 +54,7 @@ function NodeToggles() {
   )
 }
 
-function LinkView() {
+function LinkView({ canEdit }) {
   const endpoints = useMetricsStore((s) => s.endpoints)
   const fetchEndpoints = useMetricsStore((s) => s.fetchEndpoints)
 
@@ -64,9 +70,9 @@ function LinkView() {
       {/* Endpoint Cards (unified: shows live probe data + management actions) */}
       <div className="grid grid-cols-3 gap-3">
         {endpoints.map((ep) => (
-          <EndpointCard key={ep.id} endpoint={ep} />
+          <EndpointCard key={ep.id} endpoint={ep} canEdit={canEdit} />
         ))}
-        <CreateEndpointButton />
+        {canEdit && <CreateEndpointButton />}
       </div>
 
       {/* Packet Evidence */}
@@ -75,11 +81,19 @@ function LinkView() {
       {/* Probe Telemetry */}
       <ProbeTelemetry />
 
-      {/* Alert Rules + Network Chaos */}
-      <div className="grid grid-cols-2 gap-3">
-        <AlertRulesManager />
-        <NetworkChaosPanel />
-      </div>
+      {/* Alert Rules + Network Chaos (editor-only lab features) */}
+      {canEdit && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="relative">
+            <span className="absolute top-1 right-1 rounded px-1.5 py-0.5 text-xs font-semibold z-10" style={{ background: 'var(--yellow)', color: '#000', fontSize: 9 }}>CONFIG</span>
+            <AlertRulesManager />
+          </div>
+          <div className="relative">
+            <span className="absolute top-1 right-1 rounded px-1.5 py-0.5 text-xs font-semibold z-10" style={{ background: 'var(--yellow)', color: '#000', fontSize: 9 }}>LAB</span>
+            <NetworkChaosPanel />
+          </div>
+        </div>
+      )}
 
       {/* Shared alert banner */}
       <div
@@ -102,7 +116,7 @@ function LinkView() {
   )
 }
 
-function NodeView() {
+function NodeView({ canEdit }) {
   return (
     <div className="flex flex-col gap-3">
       {/* Panel 1: NodeGrid */}
@@ -143,29 +157,30 @@ function NodeView() {
         <IncidentTimeline />
       </div>
 
-      {/* Panel 4: ControlBar (chaos + node controls) */}
-      <div className="grid grid-cols-2 gap-3">
-        <div
-          className="rounded-lg p-3"
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
-        >
-          <h2>Chaos Injection</h2>
-          <ChaosPanel />
+      {/* Panel 4: ControlBar — LAB: editor-only chaos and burst controls */}
+      {canEdit && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="relative rounded-lg p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+            <span className="absolute top-1 right-1 rounded px-1.5 py-0.5 text-xs font-semibold" style={{ background: 'var(--yellow)', color: '#000', fontSize: 9 }}>LAB</span>
+            <h2>Chaos Injection</h2>
+            <ChaosPanel />
+          </div>
+          <div className="relative rounded-lg p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+            <span className="absolute top-1 right-1 rounded px-1.5 py-0.5 text-xs font-semibold" style={{ background: 'var(--yellow)', color: '#000', fontSize: 9 }}>LAB</span>
+            <h2>Burst Mode</h2>
+            <NodeControls />
+          </div>
         </div>
-        <div
-          className="rounded-lg p-3"
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
-        >
-          <h2>Burst Mode</h2>
-          <NodeControls />
-        </div>
-      </div>
+      )}
     </div>
   )
 }
 
-export default function App() {
+function Dashboard() {
   useWebSocket()
+  const session = useAuthStore((s) => s.session)
+  const projectRole = useAuthStore((s) => s.projectRole)
+  const logout = useAuthStore((s) => s.logout)
   const connected = useMetricsStore((s) => s.connected)
   const activeView = useMetricsStore((s) => s.activeView)
   const chaosCount = useMetricsStore((s) => s.chaosCount)
@@ -174,6 +189,8 @@ export default function App() {
   const totalIncidents = incidents.length
   const [showDegraded, setShowDegraded] = useState(false)
   const disconnectSince = useRef(null)
+
+  const canEdit = projectRole === 'editor' || projectRole === 'platform_admin'
 
   useEffect(() => {
     if (!connected) {
@@ -195,6 +212,7 @@ export default function App() {
         <h1 style={{ margin: 0, fontSize: 20, letterSpacing: -0.5 }}>NetPulse NOC</h1>
         <div className="flex items-center gap-3 text-xs">
           <ViewSwitcher />
+          <ProjectSelector />
           {/* operational counters */}
           <div className="flex items-center gap-3" style={{ color: 'var(--gray)' }}>
             <span title="Total chaos injections">
@@ -214,10 +232,29 @@ export default function App() {
           <span style={{ color: connected ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
             {connected ? 'LIVE' : 'DISCONNECTED'}
           </span>
+          <span style={{ color: 'var(--gray)' }}>{session.user.display_name}</span>
+          <span className="rounded px-1.5 py-0.5 text-xs" style={{
+            background: projectRole === 'platform_admin' ? 'var(--accent-bg)' : projectRole === 'editor' ? 'var(--green)' : 'var(--bg)',
+            color: projectRole === 'platform_admin' ? 'var(--accent)' : projectRole === 'editor' ? '#fff' : 'var(--gray)',
+            border: `1px solid ${projectRole === 'viewer' ? 'var(--border)' : 'transparent'}`,
+            fontSize: 9,
+          }}>
+            {projectRole || 'member'}
+          </span>
+          <NotificationCenter />
+          <button
+            onClick={logout}
+            className="rounded px-2 py-0.5 text-xs"
+            style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--gray)', cursor: 'pointer' }}
+          >
+            Sign out
+          </button>
         </div>
       </div>
 
       <div className="flex flex-col gap-3 relative">
+        <AccessConsole />
+        <SubscriptionManager />
         {/* degraded overlay */}
         {showDegraded && (
           <div
@@ -230,8 +267,23 @@ export default function App() {
           </div>
         )}
 
-        {activeView === 'node' ? <NodeView /> : <LinkView />}
+        {activeView === 'node' ? <NodeView canEdit={canEdit} /> : <LinkView canEdit={canEdit} />}
       </div>
     </main>
   )
+}
+
+export default function App() {
+  const initialized = useAuthStore((s) => s.initialized)
+  const session = useAuthStore((s) => s.session)
+  const initialize = useAuthStore((s) => s.initialize)
+
+  useEffect(() => {
+    initialize()
+  }, [initialize])
+
+  if (!initialized) {
+    return <main className="min-h-screen" style={{ background: 'var(--bg)' }} />
+  }
+  return session ? <Dashboard /> : <AuthPage />
 }

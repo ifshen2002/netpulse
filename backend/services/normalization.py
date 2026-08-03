@@ -44,10 +44,10 @@ def _compute_status(cpu: float, memory: float, latency_ms: float) -> str:
     return "green"
 
 
-# ── V2 probe telemetry normalization ────────────────────────
+# ── V2 endpoint telemetry normalization ──────────────────────
 
 
-def normalize_probe(
+def normalize_endpoint(
     raw: dict,
     packet_loss_pct: float,
     availability_pct: float,
@@ -58,18 +58,17 @@ def normalize_probe(
     avail = _clamp(availability_pct, 0, 100)
 
     return {
-        "probe_id": raw["probe_id"],
-        "link_id": raw.get("link_id", ""),
+        "endpoint_id": raw["endpoint_id"],
         "packet_evidence_id": raw.get("packet_evidence_id", ""),
         "timestamp": raw.get("timestamp", ""),
         "latency_ms": _nan_to_zero(latency_ms),
         "packet_loss_pct": _nan_to_zero(loss),
         "availability_pct": _nan_to_zero(avail),
-        "status": _compute_probe_status(latency_ms, loss, avail, has_data),
+        "status": _compute_endpoint_status(latency_ms, loss, avail, has_data),
     }
 
 
-def _compute_probe_status(
+def _compute_endpoint_status(
     latency_ms: float,
     packet_loss_pct: float,
     availability_pct: float,

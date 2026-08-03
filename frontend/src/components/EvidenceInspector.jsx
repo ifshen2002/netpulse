@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import useMetricsStore from '../store/metricsStore'
 import { toUTC8 } from '../lib/time'
 
@@ -65,51 +66,76 @@ function EvidenceTimeline({ records, chaosStartedAt }) {
   )
 }
 
-export default function EvidenceInspector({ probeId }) {
+export default function EvidenceInspector({ endpointId }) {
   const packetEvidence = useMetricsStore((s) => s.packetEvidence)
   const packetEvidenceTimeline = useMetricsStore((s) => s.packetEvidenceTimeline)
-  const probeMetrics = useMetricsStore((s) => s.probeMetrics)
+  const endpointMetrics = useMetricsStore((s) => s.endpointMetrics)
   const alerts = useMetricsStore((s) => s.alerts)
   const incidents = useMetricsStore((s) => s.incidents)
 
-  const evidence = packetEvidence[probeId]
-  const metrics = probeMetrics[probeId]
-  const timeline = [...(packetEvidenceTimeline[probeId] || [])].reverse()
+  const evidence = packetEvidence[endpointId]
+  const metrics = endpointMetrics[endpointId]
+  const timeline = [...(packetEvidenceTimeline[endpointId] || [])].reverse()
 
   if (!evidence) {
     return (
       <div className="rounded p-3" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
-        <p className="text-xs" style={{ color: 'var(--gray)' }}>No evidence available for {probeId}.</p>
+        <p className="text-xs" style={{ color: 'var(--gray)' }}>No evidence available for {endpointId}.</p>
       </div>
     )
   }
 
-  // Find related alerts for this probe
-  const relatedAlerts = alerts.filter((a) => a.probe_id === probeId)
+  // Find related alerts for this endpoint
+  const relatedAlerts = alerts.filter((a) => a.endpoint_id === endpointId)
 
   // Find related incidents
-  const relatedIncidents = incidents.filter((i) => i.probe_id === probeId)
+  const relatedIncidents = incidents.filter((i) => i.endpoint_id === endpointId)
 
-  // Derive alert evaluation info
-  const latencyThreshold = 300
-  const lossThreshold = 5
-  const availThreshold = 95
+  // Alert rules — fetched from backend for accurate evaluation
+  const [alertRules, setAlertRules] = useState([])
 
-  let latencyResult = 'OK'
-  let lossResult = 'OK'
-  let availResult = 'OK'
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const resp = await fetch('/api/alert-rules')
+        const json = await resp.json()
+        if (!cancelled && json.success) setAlertRules(json.data.filter((r) => r.enabled))
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [endpointId])
 
-  if (metrics) {
-    if (metrics.latency_ms > latencyThreshold) latencyResult = 'ALERT'
-    if (metrics.packet_loss_pct >= lossThreshold) lossResult = 'ALERT'
-    if (metrics.availability_pct <= availThreshold) availResult = 'ALERT'
-  }
+  const LEGACY_THRESHOLDS = [
+    { metric: 'latency', operator: '>', threshold: 300, severity: 'critical', name: 'Legacy Latency' },
+    { metric: 'packet_loss', operator: '>=', threshold: 5, severity: 'critical', name: 'Legacy Packet Loss' },
+    { metric: 'availability', operator: '<=', threshold: 95, severity: 'critical', name: 'Legacy Availability' },
+  ]
+
+  const activeRules = alertRules.length > 0 ? alertRules : LEGACY_THRESHOLDS
+
+  const evaluations = metrics
+    ? activeRules.map((rule) => {
+        const value = {
+          latency: metrics.latency_ms,
+          packet_loss: metrics.packet_loss_pct,
+          availability: metrics.availability_pct,
+        }[rule.metric]
+        if (value === undefined) return null
+        let tripped = false
+        if (rule.operator === '>') tripped = value > rule.threshold
+        else if (rule.operator === '<') tripped = value < rule.threshold
+        else if (rule.operator === '>=') tripped = value >= rule.threshold
+        else if (rule.operator === '<=') tripped = value <= rule.threshold
+        return { ...rule, value, tripped }
+      }).filter(Boolean)
+    : []
 
   return (
     <div className="rounded p-3 flex flex-col gap-3" style={{ background: 'var(--bg)', borderLeft: '3px solid var(--accent)' }}>
       {/* Header */}
       <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--gray)' }}>
-        <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{probeId}</span>
+        <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{endpointId}</span>
         <span>&rarr;</span>
         <span>Packet Evidence</span>
         <span className="rounded px-1 text-xs" style={{ background: 'var(--accent-bg)', color: 'var(--accent)', fontFamily: 'var(--mono)', fontSize: 9 }}>
@@ -213,74 +239,48 @@ export default function EvidenceInspector({ probeId }) {
 
       {/* Section 4: Alert Evaluation */}
       <div>
-        <h4 className="text-xs font-semibold mb-1" style={{ color: 'var(--text-h)' }}>4. Alert Evaluation</h4>
+        <h4 className="text-xs font-semibold mb-1" style={{ color: 'var(--text-h)' }}>
+          4. Alert Evaluation {alertRules.length === 0 && <span className="text-xs" style={{ color: 'var(--gray)', fontWeight: 400 }}>(legacy thresholds)</span>}
+        </h4>
         <div
           className="rounded px-2 py-1.5 text-xs flex flex-col gap-1"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
         >
-          {metrics ? (
-            <>
-              <div className="flex items-center gap-2">
-                <span style={{ color: 'var(--gray)', minWidth: '16ch' }}>Latency Critical:</span>
-                <span style={{ color: 'var(--text-h)' }}>threshold {latencyThreshold}ms</span>
+          {evaluations.length > 0 ? (
+            evaluations.map((rule, i) => (
+              <div key={rule.id || i} className="flex items-center gap-2">
+                <span className="truncate" style={{ color: 'var(--gray)', minWidth: '16ch', maxWidth: '18ch' }} title={rule.name}>
+                  {rule.name}:
+                </span>
+                <span className="rounded px-0.5 text-xs font-semibold" style={{
+                  background: rule.severity === 'critical' ? 'rgba(239,68,68,0.12)' : 'rgba(234,179,8,0.12)',
+                  color: rule.severity === 'critical' ? 'var(--red)' : 'var(--yellow)',
+                  fontSize: 7,
+                  flexShrink: 0,
+                }}>
+                  {rule.severity?.toUpperCase()}
+                </span>
+                <span style={{ color: 'var(--text-h)', fontFamily: 'var(--mono)', fontSize: 10 }}>
+                  {rule.metric} {rule.operator} {rule.threshold}
+                </span>
                 <span style={{ color: 'var(--gray)' }}>&rarr;</span>
-                <span style={{ color: 'var(--text-h)', fontFamily: 'var(--mono)' }}>
-                  observed {metrics.latency_ms.toFixed(1)}ms
+                <span style={{ color: 'var(--text-h)', fontFamily: 'var(--mono)', fontSize: 10 }}>
+                  {rule.value?.toFixed(1)}
                 </span>
                 <span>&rarr;</span>
                 <span
                   className="rounded px-1 py-0.5 text-xs font-semibold"
                   style={{
-                    background: latencyResult === 'ALERT' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.12)',
-                    color: latencyResult === 'ALERT' ? 'var(--red)' : 'var(--green)',
-                    border: `1px solid ${latencyResult === 'ALERT' ? 'var(--red)' : 'var(--green)'}`,
+                    background: rule.tripped ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.12)',
+                    color: rule.tripped ? 'var(--red)' : 'var(--green)',
+                    border: `1px solid ${rule.tripped ? 'var(--red)' : 'var(--green)'}`,
                     fontSize: 9,
                   }}
                 >
-                  {latencyResult}
+                  {rule.tripped ? 'ALERT' : 'OK'}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <span style={{ color: 'var(--gray)', minWidth: '16ch' }}>Packet Loss Critical:</span>
-                <span style={{ color: 'var(--text-h)' }}>threshold {lossThreshold}%</span>
-                <span style={{ color: 'var(--gray)' }}>&rarr;</span>
-                <span style={{ color: 'var(--text-h)', fontFamily: 'var(--mono)' }}>
-                  observed {metrics.packet_loss_pct.toFixed(1)}%
-                </span>
-                <span>&rarr;</span>
-                <span
-                  className="rounded px-1 py-0.5 text-xs font-semibold"
-                  style={{
-                    background: lossResult === 'ALERT' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.12)',
-                    color: lossResult === 'ALERT' ? 'var(--red)' : 'var(--green)',
-                    border: `1px solid ${lossResult === 'ALERT' ? 'var(--red)' : 'var(--green)'}`,
-                    fontSize: 9,
-                  }}
-                >
-                  {lossResult}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span style={{ color: 'var(--gray)', minWidth: '16ch' }}>Availability Low:</span>
-                <span style={{ color: 'var(--text-h)' }}>threshold {availThreshold}%</span>
-                <span style={{ color: 'var(--gray)' }}>&rarr;</span>
-                <span style={{ color: 'var(--text-h)', fontFamily: 'var(--mono)' }}>
-                  observed {metrics.availability_pct.toFixed(1)}%
-                </span>
-                <span>&rarr;</span>
-                <span
-                  className="rounded px-1 py-0.5 text-xs font-semibold"
-                  style={{
-                    background: availResult === 'ALERT' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.12)',
-                    color: availResult === 'ALERT' ? 'var(--red)' : 'var(--green)',
-                    border: `1px solid ${availResult === 'ALERT' ? 'var(--red)' : 'var(--green)'}`,
-                    fontSize: 9,
-                  }}
-                >
-                  {availResult}
-                </span>
-              </div>
-            </>
+            ))
           ) : (
             <span style={{ color: 'var(--gray)' }}>No metrics to evaluate.</span>
           )}

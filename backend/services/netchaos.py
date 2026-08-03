@@ -14,23 +14,23 @@ from db import engine
 # ── in-memory state ──────────────────────────────────────────────
 # Only one active chaos injection at a time, system-wide.
 
-_active: dict | None = None  # {probe_id, chaos_type, value, target_ip, started_at}
+_active: dict | None = None  # {endpoint_id, chaos_type, value, target_ip, started_at}
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _resolve_target_ip(probe_id: str) -> str:
-    """Look up the endpoint for a probe."""
+async def _resolve_target_ip(endpoint_id: str) -> str:
+    """Look up the target host for an endpoint."""
     async with engine.begin() as conn:
         row = (await conn.execute(
-            text("SELECT endpoint FROM probes WHERE id = :id"),
-            {"id": probe_id},
+            text("SELECT target_host FROM endpoints WHERE id = :id"),
+            {"id": endpoint_id},
         )).fetchone()
 
     if row is None:
-        raise ValueError(f"Probe {probe_id} not found")
+        raise ValueError(f"Endpoint {endpoint_id} not found")
 
     return row[0]
 
@@ -96,19 +96,19 @@ async def _clear_tc() -> None:
     # Exit code may be non-zero if no qdisc exists — that's fine
 
 
-async def inject(probe_id: str, chaos_type: str, value: int | float) -> dict:
-    """Inject network chaos targeting a specific probe's endpoint.
+async def inject(endpoint_id: str, chaos_type: str, value: int | float) -> dict:
+    """Inject network chaos targeting a specific endpoint.
 
     Only one chaos injection can be active at a time.
     Calling inject() while another is active will clear the previous one first.
     """
     global _active
 
-    target_ip = await _resolve_target_ip(probe_id)
+    target_ip = await _resolve_target_ip(endpoint_id)
     await _apply_tc(target_ip, chaos_type, value)
 
     _active = {
-        "probe_id": probe_id,
+        "endpoint_id": endpoint_id,
         "chaos_type": chaos_type,
         "value": value,
         "target_ip": target_ip,
@@ -117,16 +117,16 @@ async def inject(probe_id: str, chaos_type: str, value: int | float) -> dict:
     return dict(_active)
 
 
-async def recover(probe_id: str | None = None) -> dict | None:
+async def recover(endpoint_id: str | None = None) -> dict | None:
     """Recover from network chaos.
 
-    If probe_id is specified, only clears if that probe matches the active chaos.
-    If probe_id is None, clears all chaos unconditionally.
+    If endpoint_id is specified, only clears if that endpoint matches the active chaos.
+    If endpoint_id is None, clears all chaos unconditionally.
     Returns the completed session with ended_at timestamp.
     """
     global _active
 
-    if probe_id is not None and (_active is None or _active["probe_id"] != probe_id):
+    if endpoint_id is not None and (_active is None or _active["endpoint_id"] != endpoint_id):
         return _active
 
     await _clear_tc()

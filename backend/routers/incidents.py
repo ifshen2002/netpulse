@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import text
 
 from db import engine
 from schemas import AlertOut, IncidentOut
+from services.auth import CurrentUser, project_clause, require_project_member
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 
@@ -11,17 +12,20 @@ router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 async def list_incidents(
     status: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
+    user: CurrentUser = Depends(require_project_member),
+    project_id: str | None = Header(default=None, alias="X-Project-ID"),
 ):
-    clauses = []
-    params = {"limit": limit}
+    clause, params = project_clause(project_id)
+    params["limit"] = limit
     if status:
-        clauses.append("status = :status")
         params["status"] = status
 
-    where_str = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    where = f"WHERE 1=1{clause}"
+    if status:
+        where += " AND status = :status"
     sql = (
-        "SELECT id, title, status, opened_at, closed_at "  # nosec B608
-        "FROM incidents " + where_str + " ORDER BY opened_at DESC LIMIT :limit"
+        f"SELECT id, title, status, opened_at, closed_at "
+        f"FROM incidents {where} ORDER BY opened_at DESC LIMIT :limit"
     )
 
     async with engine.connect() as conn:
@@ -42,14 +46,20 @@ async def list_incidents(
 
 
 @router.get("/{incident_id}")
-async def get_incident(incident_id: str):
+async def get_incident(
+    incident_id: str,
+    user: CurrentUser = Depends(require_project_member),
+    project_id: str | None = Header(default=None, alias="X-Project-ID"),
+):
+    clause, params = project_clause(project_id)
+    params["id"] = incident_id
     async with engine.connect() as conn:
         inc = await conn.execute(
             text(
-                "SELECT id, title, status, opened_at, closed_at "
-                "FROM incidents WHERE id = :id"
+                f"SELECT id, title, status, opened_at, closed_at "
+                f"FROM incidents WHERE id = :id{clause}"
             ),
-            {"id": incident_id},
+            params,
         )
         inc_row = inc.first()
 

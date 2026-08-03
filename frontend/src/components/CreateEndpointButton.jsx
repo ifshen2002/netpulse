@@ -6,12 +6,23 @@ export default function CreateEndpointButton() {
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
   const [targetHost, setTargetHost] = useState('')
+  const [sourceIp, setSourceIp] = useState('')
+  const [sourceIps, setSourceIps] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const fetchSourceIps = async () => {
+    try {
+      const resp = await fetch('/api/source-ips')
+      const json = await resp.json()
+      if (json.success) setSourceIps(json.data || [])
+    } catch { /* ignore */ }
+  }
 
   const resetForm = () => {
     setName('')
     setTargetHost('')
+    setSourceIp('')
     setShowForm(false)
     setError('')
   }
@@ -23,7 +34,7 @@ export default function CreateEndpointButton() {
       const resp = await fetch('/api/endpoints', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), target_host: targetHost.trim() }),
+        body: JSON.stringify({ name: name.trim(), target_host: targetHost.trim(), source_ip: sourceIp.trim() || null }),
       })
       const json = await resp.json()
       if (!json.success) {
@@ -48,7 +59,7 @@ export default function CreateEndpointButton() {
           border: '2px dashed var(--border)',
           minHeight: 120,
         }}
-        onClick={() => { resetForm(); setShowForm(true); }}
+        onClick={() => { resetForm(); fetchSourceIps(); setShowForm(true); }}
       >
         <span className="text-sm font-semibold" style={{ color: 'var(--gray)' }}>
           + Add Endpoint
@@ -97,6 +108,28 @@ export default function CreateEndpointButton() {
                 }}
               />
             </label>
+
+            {sourceIps.length > 0 && (
+              <label className="flex flex-col gap-1 text-xs" style={{ color: 'var(--gray)' }}>
+                Source IP (monitoring origin)
+                <select
+                  value={sourceIp}
+                  onChange={(e) => setSourceIp(e.target.value)}
+                  className="rounded px-2 py-1 text-sm"
+                  style={{
+                    background: 'var(--bg)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-h)',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">Auto-detect</option>
+                  {sourceIps.map((ip) => (
+                    <option key={ip} value={ip}>{ip}</option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             {error && (
               <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>

@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from redis_client import client as redis
 from schemas import ChaosInjectIn, ChaosRecoverIn
 from services import chaos as chaos_svc
@@ -8,6 +8,8 @@ from services.chaos import OVERLAY_TYPES
 from scheduler import sync_burst_interval
 from services.alerting import clear_cooldown, fire_standalone_alert
 from services.simulator import set_burst
+from db import engine
+from services.auth import CurrentUser, audit, require_project_editor, require_project_member
 
 router = APIRouter(prefix="/api/chaos", tags=["chaos"])
 
@@ -18,7 +20,7 @@ _CHAOS_ALERT_MAP = {"cpu_spike": "cpu_high", "latency_spike": "latency_spike"}
 
 
 @router.get("/status")
-async def get_status():
+async def get_status(user: CurrentUser = Depends(require_project_member)):
     state = chaos_svc.status()
     from services.simulator import get_burst_interval
     return {
@@ -31,7 +33,7 @@ async def get_status():
 
 
 @router.post("/inject")
-async def inject(body: ChaosInjectIn):
+async def inject(body: ChaosInjectIn, user: CurrentUser = Depends(require_project_editor)):
     try:
         event_id = await chaos_svc.inject(
             body.node_id, body.chaos_type, body.config
@@ -48,6 +50,15 @@ async def inject(body: ChaosInjectIn):
             body.chaos_type,
             f"Chaos injected: {body.chaos_type} on {body.node_id}",
         )
+        async with engine.begin() as conn:
+            await audit(
+                conn,
+                action="chaos.injected",
+                actor_user_id=user.id,
+                resource_type="chaos",
+                resource_id=event_id,
+                details={"node_id": body.node_id, "chaos_type": body.chaos_type, "config": body.config},
+            )
         return {"success": True, "data": {"event_id": event_id}}
 
     # For overlay types: clear cooldown + force immediate evaluation so the
@@ -91,12 +102,22 @@ async def inject(body: ChaosInjectIn):
                         )
                     )
                     await evaluate_node(body.node_id)
+        # log after effect is applied
+        async with engine.begin() as conn:
+            await audit(
+                conn,
+                action="chaos.injected",
+                actor_user_id=user.id,
+                resource_type="chaos",
+                resource_id=event_id,
+                details={"node_id": body.node_id, "chaos_type": body.chaos_type, "config": body.config},
+            )
 
     return {"success": True, "data": {"event_id": event_id}}
 
 
 @router.post("/recover")
-async def recover(body: ChaosRecoverIn | None = None):
+async def recover(body: ChaosRecoverIn | None = None, user: CurrentUser = Depends(require_project_editor)):
     node_id = body.node_id if body else None
     chaos_type = body.chaos_type if body else None
     removed = await chaos_svc.recover_all(node_id, chaos_type)
@@ -121,11 +142,20 @@ async def recover(body: ChaosRecoverIn | None = None):
         else:
             for nid in ("node-2", "node-3"):
                 await _resolve(nid)
+    async with engine.begin() as conn:
+        await audit(
+            conn,
+            action="chaos.recovered",
+            actor_user_id=user.id,
+            resource_type="chaos",
+            resource_id=node_id,
+            details={"chaos_type": chaos_type, "removed": removed},
+        )
     return {"success": True, "data": {"removed": removed}}
 
 
 @router.post("/burst")
-async def set_burst_endpoint(body: ChaosInjectIn):
+async def set_burst_endpoint(body: ChaosInjectIn, user: CurrentUser = Depends(require_project_editor)):
     if body.chaos_type != "burst":
         return {
             "success": False,
@@ -142,6 +172,15 @@ async def set_burst_endpoint(body: ChaosInjectIn):
         }
     set_burst(body.node_id, interval)
     sync_burst_interval()
+    async with engine.begin() as conn:
+        await audit(
+            conn,
+            action="chaos.burst_updated",
+            actor_user_id=user.id,
+            resource_type="chaos",
+            resource_id=body.node_id,
+            details={"interval": interval},
+        )
     return {
         "success": True,
         "data": {"node_id": body.node_id, "burst": interval > 0, "interval": interval},

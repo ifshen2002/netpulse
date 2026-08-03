@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import text
 
 from db import engine
 from schemas import AlertOut
+from services.auth import CurrentUser, project_clause, require_project_member
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -11,17 +12,20 @@ router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 async def list_alerts(
     node_id: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
+    user: CurrentUser = Depends(require_project_member),
+    project_id: str | None = Header(default=None, alias="X-Project-ID"),
 ):
-    clauses = []
-    params = {"limit": limit}
+    clause, params = project_clause(project_id)
+    params["limit"] = limit
     if node_id:
-        clauses.append("node_id = :node_id")
         params["node_id"] = node_id
 
-    where_str = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    where = f"WHERE 1=1{clause}"
+    if node_id:
+        where += " AND node_id = :node_id"
     sql = (
-        "SELECT id, node_id, incident_id, alert_type, message, fired_at, resolved_at "  # nosec B608
-        "FROM alerts " + where_str + " ORDER BY fired_at DESC LIMIT :limit"
+        f"SELECT id, node_id, incident_id, alert_type, message, fired_at, resolved_at "
+        f"FROM alerts {where} ORDER BY fired_at DESC LIMIT :limit"
     )
 
     async with engine.connect() as conn:
@@ -44,14 +48,20 @@ async def list_alerts(
 
 
 @router.get("/{alert_id}")
-async def get_alert(alert_id: str):
+async def get_alert(
+    alert_id: str,
+    user: CurrentUser = Depends(require_project_member),
+    project_id: str | None = Header(default=None, alias="X-Project-ID"),
+):
+    clause, params = project_clause(project_id)
+    params["id"] = alert_id
     async with engine.connect() as conn:
         result = await conn.execute(
             text(
-                "SELECT id, node_id, incident_id, alert_type, message, "
-                "fired_at, resolved_at FROM alerts WHERE id = :id"
+                f"SELECT id, node_id, incident_id, alert_type, message, "
+                f"fired_at, resolved_at FROM alerts WHERE id = :id{clause}"
             ),
-            {"id": alert_id},
+            params,
         )
         row = result.first()
 

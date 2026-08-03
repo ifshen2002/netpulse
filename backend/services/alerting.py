@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -7,6 +8,8 @@ from sqlalchemy import text
 from db import engine
 from redis_client import client as redis
 from routers.websocket import manager
+
+logger = logging.getLogger(__name__)
 
 # ── in-memory state ──────────────────────────────────────────────
 _cooldowns: dict[tuple[str, str], datetime] = {}
@@ -56,7 +59,8 @@ def _event(event_dict: dict) -> str:
 # ── alert persistence ─────────────────────────────────────────────
 
 async def _insert_alert(
-    node_id: str, incident_id: str | None, alert_type: str, message: str
+    node_id: str, incident_id: str | None, alert_type: str, message: str,
+    project_id: str | None = None,
 ) -> str:
     alert_id = str(uuid.uuid4())
     now = _utcnow()
@@ -64,8 +68,8 @@ async def _insert_alert(
         await conn.execute(
             text(
                 "INSERT INTO alerts (id, node_id, incident_id, alert_type, "
-                "message, fired_at) "
-                "VALUES (:id, :node_id, :incident_id, :alert_type, :message, :fired_at)"
+                "message, project_id, fired_at) "
+                "VALUES (:id, :node_id, :incident_id, :alert_type, :message, :project_id, :fired_at)"
             ),
             {
                 "id": alert_id,
@@ -73,6 +77,7 @@ async def _insert_alert(
                 "incident_id": incident_id,
                 "alert_type": alert_type,
                 "message": message,
+                "project_id": project_id,
                 "fired_at": now,
             },
         )
@@ -149,6 +154,9 @@ async def _resolve_incident(node_id: str) -> None:
         )
     )
 
+    # Auto-resolve notifications for this incident
+    await _resolve_notifications_for_incident(incident_id)
+
 
 # ── alert firing ──────────────────────────────────────────────────
 
@@ -160,7 +168,18 @@ async def _fire_alert(
 
     _set_cooldown(node_id, alert_type)
     incident_id = await _create_incident(node_id, alert_type)
-    alert_id = await _insert_alert(node_id, incident_id, alert_type, message)
+
+    # Look up project_id for the node
+    project_id = None
+    async with engine.begin() as conn:
+        row = (await conn.execute(
+            text("SELECT project_id FROM nodes WHERE id = :id"),
+            {"id": node_id},
+        )).fetchone()
+        if row:
+            project_id = row[0]
+
+    alert_id = await _insert_alert(node_id, incident_id, alert_type, message, project_id)
     now = _utcnow()
 
     await manager.broadcast(
@@ -176,6 +195,12 @@ async def _fire_alert(
             }
         )
     )
+
+    # Deliver in-app notifications to matching subscribers
+    await _deliver_notifications_for_node(
+        node_id, alert_id, incident_id, alert_type, message, project_id,
+    )
+
     return alert_id, incident_id
 
 
@@ -259,6 +284,9 @@ async def resolve_for_node(node_id: str, now: datetime | None = None) -> None:
         )
     )
 
+    # Auto-resolve notifications for this incident
+    await _resolve_notifications_for_incident(incident_id)
+
 
 # ── public API ────────────────────────────────────────────────────
 
@@ -309,43 +337,12 @@ async def check_heartbeats() -> None:
             )
 
 
-# ── V2 probe alerting ─────────────────────────────────────────────
-# Separate in-memory state from V1 to prevent key collisions.
-
-# Hardcoded threshold defaults — used if no alert_rules are loaded.
-_probe_latency_threshold_ms = 300
-_probe_packet_loss_threshold_pct = 5.0
-_probe_availability_threshold_pct = 95.0
+# ── V2 endpoint alerting ───────────────────────────────────────────
+# Single source of truth: alert_rules table. No legacy fallback thresholds.
 
 # Rule cache — loaded from DB, refreshed on rule CRUD.
 _active_rules: list[dict] = []
 _rules_loaded = False
-
-
-def get_probe_thresholds() -> dict:
-    """Return current probe alert thresholds (legacy flat format)."""
-    return {
-        "latency_ms": _probe_latency_threshold_ms,
-        "packet_loss_pct": _probe_packet_loss_threshold_pct,
-        "availability_pct": _probe_availability_threshold_pct,
-    }
-
-
-def set_probe_threshold(
-    latency_ms: int | None = None,
-    packet_loss_pct: float | None = None,
-    availability_pct: float | None = None,
-) -> None:
-    """Update legacy probe alert thresholds at runtime."""
-    global _probe_latency_threshold_ms
-    global _probe_packet_loss_threshold_pct
-    global _probe_availability_threshold_pct
-    if latency_ms is not None:
-        _probe_latency_threshold_ms = latency_ms
-    if packet_loss_pct is not None:
-        _probe_packet_loss_threshold_pct = packet_loss_pct
-    if availability_pct is not None:
-        _probe_availability_threshold_pct = availability_pct
 
 
 async def reload_rules() -> None:
@@ -390,82 +387,84 @@ def _evaluate_condition(value: float, operator: str, threshold: float) -> bool:
     return False
 
 
-_probe_cooldowns: dict[tuple[str, str], datetime] = {}
-_probe_clean_streaks: dict[str, int] = {}
-_probe_open_incidents: dict[str, str] = {}
-_probe_heartbeats: dict[str, datetime] = {}
+_endpoint_cooldowns: dict[tuple[str, str], datetime] = {}
+_endpoint_clean_streaks: dict[str, int] = {}
+_endpoint_open_incidents: dict[str, str] = {}
+_endpoint_heartbeats: dict[str, datetime] = {}
 
 # ── V2 rule-state tracking (state-based alerting) ────────────────
-# Maps (probe_id, rule_id) → alert_id when a rule condition is currently active.
+# Maps (endpoint_id, rule_id) → alert_id when a rule condition is currently active.
 # Removed when the condition drops back within threshold.
 _active_rule_state: dict[tuple[str, str], str] = {}
 
 
-def _probe_is_in_cooldown(probe_id: str, alert_type: str) -> bool:
-    last = _probe_cooldowns.get((probe_id, alert_type))
+def _endpoint_is_in_cooldown(endpoint_id: str, alert_type: str) -> bool:
+    last = _endpoint_cooldowns.get((endpoint_id, alert_type))
     if last is None:
         return False
     return (_utcnow() - last).total_seconds() < COOLDOWN_S
 
 
-def _probe_set_cooldown(probe_id: str, alert_type: str) -> None:
-    _probe_cooldowns[(probe_id, alert_type)] = _utcnow()
+def _endpoint_set_cooldown(endpoint_id: str, alert_type: str) -> None:
+    _endpoint_cooldowns[(endpoint_id, alert_type)] = _utcnow()
 
 
-async def _insert_probe_alert(
-    probe_id: str, incident_id: str | None, alert_type: str, message: str
+async def _insert_endpoint_alert(
+    endpoint_id: str, incident_id: str | None, alert_type: str, message: str,
+    project_id: str | None = None,
 ) -> str:
     alert_id = str(uuid.uuid4())
     now = _utcnow()
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO alerts (id, probe_id, incident_id, alert_type, "
-                "message, fired_at) "
-                "VALUES (:id, :probe_id, :incident_id, :alert_type, :message, :fired_at)"
+                "INSERT INTO alerts (id, endpoint_id, incident_id, alert_type, "
+                "message, project_id, fired_at) "
+                "VALUES (:id, :endpoint_id, :incident_id, :alert_type, :message, :project_id, :fired_at)"
             ),
             {
                 "id": alert_id,
-                "probe_id": probe_id,
+                "endpoint_id": endpoint_id,
                 "incident_id": incident_id,
                 "alert_type": alert_type,
                 "message": message,
+                "project_id": project_id,
                 "fired_at": now,
             },
         )
     return alert_id
 
 
-async def _create_probe_incident(probe_id: str, alert_type: str) -> str:
-    existing = _probe_open_incidents.get(probe_id)
+async def _create_endpoint_incident(endpoint_id: str, alert_type: str) -> str:
+    existing = _endpoint_open_incidents.get(endpoint_id)
     if existing is not None:
         return existing
 
     incident_id = str(uuid.uuid4())
-    title = f"{probe_id} {alert_type}"
+    title = f"{endpoint_id} {alert_type}"
     now = _utcnow()
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO incidents (id, title, status, probe_id, opened_at) "
-                "VALUES (:id, :title, 'open', :probe_id, :opened_at)"
+                "INSERT INTO incidents (id, title, status, endpoint_id, opened_at) "
+                "VALUES (:id, :title, 'open', :endpoint_id, :opened_at)"
             ),
             {
                 "id": incident_id,
                 "title": title,
-                "probe_id": probe_id,
+                "endpoint_id": endpoint_id,
                 "opened_at": now,
             },
         )
 
-    _probe_open_incidents[probe_id] = incident_id
+    _endpoint_open_incidents[endpoint_id] = incident_id
     await manager.broadcast(
         _event(
             {
                 "type": "incident_opened",
                 "incident_id": incident_id,
                 "title": title,
-                "probe_id": probe_id,
+                "endpoint_id": endpoint_id,
                 "timestamp": now.isoformat(),
             }
         )
@@ -473,8 +472,8 @@ async def _create_probe_incident(probe_id: str, alert_type: str) -> str:
     return incident_id
 
 
-async def _resolve_probe_incident(probe_id: str) -> None:
-    incident_id = _probe_open_incidents.pop(probe_id, None)
+async def _resolve_endpoint_incident(endpoint_id: str) -> None:
+    incident_id = _endpoint_open_incidents.pop(endpoint_id, None)
     if incident_id is None:
         return
 
@@ -495,36 +494,52 @@ async def _resolve_probe_incident(probe_id: str) -> None:
             {"now": now, "id": incident_id},
         )
 
-    # Clear all in-memory state for this probe
-    for key in list(_probe_cooldowns.keys()):
-        if key[0] == probe_id:
-            del _probe_cooldowns[key]
+    # Clear all in-memory state for this endpoint
+    for key in list(_endpoint_cooldowns.keys()):
+        if key[0] == endpoint_id:
+            del _endpoint_cooldowns[key]
     for key in list(_active_rule_state.keys()):
-        if key[0] == probe_id:
+        if key[0] == endpoint_id:
             del _active_rule_state[key]
-    _probe_clean_streaks.pop(probe_id, None)
+    _endpoint_clean_streaks.pop(endpoint_id, None)
 
     await manager.broadcast(
         _event(
             {
                 "type": "incident_closed",
                 "incident_id": incident_id,
-                "probe_id": probe_id,
+                "endpoint_id": endpoint_id,
                 "timestamp": now.isoformat(),
             }
         )
     )
 
+    # Auto-resolve notifications for this incident
+    await _resolve_notifications_for_incident(incident_id)
 
-async def _fire_probe_alert(
-    probe_id: str, alert_type: str, message: str, evidence_id: str | None = None
+
+async def _fire_endpoint_alert(
+    endpoint_id: str, alert_type: str, message: str, evidence_id: str | None = None
 ) -> tuple[str, str] | tuple[None, None]:
-    if _probe_is_in_cooldown(probe_id, alert_type):
+    if _endpoint_is_in_cooldown(endpoint_id, alert_type):
         return None, None
 
-    _probe_set_cooldown(probe_id, alert_type)
-    incident_id = await _create_probe_incident(probe_id, alert_type)
-    alert_id = await _insert_probe_alert(probe_id, incident_id, alert_type, message)
+    _endpoint_set_cooldown(endpoint_id, alert_type)
+    incident_id = await _create_endpoint_incident(endpoint_id, alert_type)
+
+    # Look up project_id for the endpoint
+    project_id = None
+    async with engine.begin() as conn:
+        row = (await conn.execute(
+            text("SELECT project_id FROM endpoints WHERE id = :id"),
+            {"id": endpoint_id},
+        )).fetchone()
+        if row:
+            project_id = row[0]
+
+    alert_id = await _insert_endpoint_alert(
+        endpoint_id, incident_id, alert_type, message, project_id,
+    )
     now = _utcnow()
 
     await manager.broadcast(
@@ -533,7 +548,7 @@ async def _fire_probe_alert(
                 "type": "alert_fired",
                 "alert_id": alert_id,
                 "incident_id": incident_id,
-                "probe_id": probe_id,
+                "endpoint_id": endpoint_id,
                 "alert_type": alert_type,
                 "message": message,
                 "evidence_id": evidence_id,
@@ -541,27 +556,33 @@ async def _fire_probe_alert(
             }
         )
     )
+
+    # Deliver in-app notifications to matching subscribers
+    await _deliver_notifications_for_endpoint(
+        endpoint_id, alert_id, incident_id, alert_type, message, project_id,
+    )
+
     return alert_id, incident_id
 
 
-async def _handle_probe_recovery(probe_id: str) -> None:
-    if probe_id not in _probe_open_incidents:
-        _probe_clean_streaks.pop(probe_id, None)
+async def _handle_endpoint_recovery(endpoint_id: str) -> None:
+    if endpoint_id not in _endpoint_open_incidents:
+        _endpoint_clean_streaks.pop(endpoint_id, None)
         return
 
-    _probe_clean_streaks[probe_id] = _probe_clean_streaks.get(probe_id, 0) + 1
-    if _probe_clean_streaks[probe_id] >= RECOVERY_STREAK:
-        await _resolve_probe_incident(probe_id)
+    _endpoint_clean_streaks[endpoint_id] = _endpoint_clean_streaks.get(endpoint_id, 0) + 1
+    if _endpoint_clean_streaks[endpoint_id] >= RECOVERY_STREAK:
+        await _resolve_endpoint_incident(endpoint_id)
 
 
-async def evaluate_probe(probe_id: str) -> list[dict]:
-    """Evaluate probe telemetry against alert rules (or legacy thresholds)."""
-    raw = await redis.get(f"metrics:latest:probe:{probe_id}")
+async def evaluate_endpoint(endpoint_id: str) -> list[dict]:
+    """Evaluate endpoint telemetry against alert rules."""
+    raw = await redis.get(f"metrics:latest:endpoint:{endpoint_id}")
     if raw is None:
         return []
 
     m = json.loads(raw)
-    _probe_heartbeats[probe_id] = _utcnow()
+    _endpoint_heartbeats[endpoint_id] = _utcnow()
 
     # Do not alert while status is gray — no data yet
     if m.get("status") == "gray":
@@ -569,61 +590,20 @@ async def evaluate_probe(probe_id: str) -> list[dict]:
 
     evidence_id = m.get("packet_evidence_id")
 
-    if _rules_loaded and _active_rules:
-        return await _evaluate_rules(probe_id, m, evidence_id)
+    if not (_rules_loaded and _active_rules):
+        return []
 
-    # Legacy fallback — used when alert_rules table doesn't exist
-    latency = m.get("latency_ms", 0)
-    loss = m.get("packet_loss_pct", 0)
-    avail = m.get("availability_pct", 0)
-
-    fired = []
-
-    if latency > _probe_latency_threshold_ms:
-        aid, _ = await _fire_probe_alert(
-            probe_id, "probe_latency_high",
-            f"Latency {latency:.1f}ms > {_probe_latency_threshold_ms}ms [evidence {evidence_id}]",
-            evidence_id,
-        )
-        if aid:
-            fired.append({"alert_id": aid, "alert_type": "probe_latency_high"})
-
-    t_loss = _probe_packet_loss_threshold_pct
-    if loss >= t_loss:
-        aid, _ = await _fire_probe_alert(
-            probe_id, "probe_packet_loss_high",
-            f"Packet loss {loss:.1f}% >= {t_loss}% [evidence {evidence_id}]",
-            evidence_id,
-        )
-        if aid:
-            fired.append({"alert_id": aid, "alert_type": "probe_packet_loss_high"})
-
-    t_avail = _probe_availability_threshold_pct
-    if avail <= t_avail:
-        aid, _ = await _fire_probe_alert(
-            probe_id, "probe_availability_low",
-            f"Availability {avail:.1f}% <= {t_avail}% [evidence {evidence_id}]",
-            evidence_id,
-        )
-        if aid:
-            fired.append({"alert_id": aid, "alert_type": "probe_availability_low"})
-
-    if fired:
-        _probe_clean_streaks[probe_id] = 0
-    else:
-        await _handle_probe_recovery(probe_id)
-
-    return fired
+    return await _evaluate_rules(endpoint_id, m, evidence_id)
 
 
-async def _evaluate_rules(probe_id: str, m: dict, evidence_id: str | None) -> list[dict]:
-    """Evaluate all active rules against probe telemetry with state-based semantics.
+async def _evaluate_rules(endpoint_id: str, m: dict, evidence_id: str | None) -> list[dict]:
+    """Evaluate all active rules against endpoint telemetry with state-based semantics.
 
     State-based alerting:
       - Condition becomes true + not already active → fire alert, mark active
       - Condition stays true + already active → no-op (condition persists)
       - Condition becomes false + was active → resolve alert for this rule
-      - Incident closes only when ALL rules for the probe are resolved.
+      - Incident closes only when ALL rules for the endpoint are resolved.
     """
     metric_values = {
         "latency": m.get("latency_ms", 0),
@@ -637,7 +617,7 @@ async def _evaluate_rules(probe_id: str, m: dict, evidence_id: str | None) -> li
     for rule in _active_rules:
         rid = rule["id"]
         alert_type = rule["alert_type"]
-        state_key = (probe_id, rid)
+        state_key = (endpoint_id, rid)
         value = metric_values.get(rule["metric"])
         if value is None:
             continue
@@ -646,35 +626,30 @@ async def _evaluate_rules(probe_id: str, m: dict, evidence_id: str | None) -> li
 
         if condition_true:
             if state_key in _active_rule_state:
-                # Condition persists — alert stays open, nothing to do.
                 continue
-            # Condition newly tripped — fire alert (cooldown still guards against storms).
             message = (
                 f"[{rule['severity'].upper()}] {rule['name']}: "
                 f"{rule['metric']} {rule['operator']} {rule['threshold']} "
                 f"(observed: {value:.1f}) [evidence {evidence_id}]"
             )
-            aid, _ = await _fire_probe_alert(probe_id, alert_type, message, evidence_id)
+            aid, _ = await _fire_endpoint_alert(endpoint_id, alert_type, message, evidence_id)
             if aid:
                 _active_rule_state[state_key] = aid
                 fired.append({"alert_id": aid, "alert_type": alert_type, "rule_id": rid})
         else:
             if state_key in _active_rule_state:
-                # Condition resolved — mark rule inactive, resolve the alert row.
                 alert_id = _active_rule_state.pop(state_key)
                 newly_resolved.append(alert_id)
                 await _resolve_alert_row(alert_id)
 
-    # Resolve incident only when ALL previously-active rules have resolved
-    # AND no rules are currently active for this probe.
-    active_for_probe = any(
-        state_key[0] == probe_id for state_key in _active_rule_state
+    active_for_endpoint = any(
+        state_key[0] == endpoint_id for state_key in _active_rule_state
     )
 
     if fired:
-        _probe_clean_streaks[probe_id] = 0
-    elif not active_for_probe:
-        await _handle_probe_recovery(probe_id)
+        _endpoint_clean_streaks[endpoint_id] = 0
+    elif not active_for_endpoint:
+        await _handle_endpoint_recovery(endpoint_id)
 
     return fired
 
@@ -689,19 +664,104 @@ async def _resolve_alert_row(alert_id: str) -> None:
         )
 
 
-async def check_probe_heartbeats() -> None:
+async def check_endpoint_heartbeats() -> None:
     now = _utcnow()
     async with engine.begin() as conn:
-        result = await conn.execute(text("SELECT id FROM probes"))
-        probe_ids = [row[0] for row in result.fetchall()]
+        result = await conn.execute(text("SELECT id FROM endpoints"))
+        endpoint_ids = [row[0] for row in result.fetchall()]
 
-    for probe_id in probe_ids:
-        last = _probe_heartbeats.get(probe_id)
+    for endpoint_id in endpoint_ids:
+        last = _endpoint_heartbeats.get(endpoint_id)
         if last is None:
             continue
         if (now - last).total_seconds() > HEARTBEAT_TIMEOUT_S:
-            await _fire_probe_alert(
-                probe_id,
-                "probe_heartbeat_timeout",
+            await _fire_endpoint_alert(
+                endpoint_id,
+                "endpoint_heartbeat_timeout",
                 f"No heartbeat for {HEARTBEAT_TIMEOUT_S}s",
             )
+
+
+# ── notification delivery ────────────────────────────────────────
+
+
+def _alert_severity(alert_type: str) -> str:
+    """Map alert_type to notification severity."""
+    critical = {
+        "cpu_high", "heartbeat_timeout",
+        "endpoint_packet_loss_high", "endpoint_availability_low", "endpoint_heartbeat_timeout",
+    }
+    return "critical" if alert_type in critical else "warning"
+
+
+async def _deliver_notifications_for_node(
+    node_id: str, alert_id: str, incident_id: str | None, alert_type: str, message: str,
+    project_id: str | None = None,
+) -> None:
+    """Deliver in-app notifications for a V1 node alert."""
+    from services.notifications import match_and_deliver
+
+    if not project_id:
+        return
+    try:
+        severity = _alert_severity(alert_type)
+        async with engine.begin() as conn:
+            delivered = await match_and_deliver(
+                conn,
+                alert_id=alert_id,
+                incident_id=incident_id,
+                project_id=project_id,
+                alert_type=alert_type,
+                message=message,
+                severity=severity,
+                resource_type="node",
+            )
+        if delivered > 0:
+            logger.info("notifications: delivered %d for alert %s", delivered, alert_id)
+    except Exception:
+        logger.exception("notification delivery failed for node alert %s", alert_id)
+
+
+async def _deliver_notifications_for_endpoint(
+    endpoint_id: str, alert_id: str, incident_id: str | None, alert_type: str, message: str,
+    project_id: str | None = None,
+) -> None:
+    """Deliver in-app notifications for a V2 endpoint alert."""
+    from services.notifications import match_and_deliver
+
+    if not project_id:
+        return
+    try:
+        severity = _alert_severity(alert_type)
+        async with engine.begin() as conn:
+            delivered = await match_and_deliver(
+                conn,
+                alert_id=alert_id,
+                incident_id=incident_id,
+                project_id=project_id,
+                alert_type=alert_type,
+                message=message,
+                severity=severity,
+                resource_type="endpoint",
+            )
+        if delivered > 0:
+            logger.info("notifications: delivered %d for endpoint alert %s", delivered, alert_id)
+    except Exception:
+        logger.exception("notification delivery failed for endpoint alert %s", alert_id)
+
+# ── notification auto-resolve on incident close ─────────────────
+
+
+async def _resolve_notifications_for_incident(incident_id: str) -> None:
+    """Mark all notifications for an incident as resolved."""
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "UPDATE in_app_notifications SET status = 'resolved', resolved_at = NOW() "
+                    "WHERE incident_id = :incident_id AND status != 'resolved'"
+                ),
+                {"incident_id": incident_id},
+            )
+    except Exception:
+        logger.exception("notification auto-resolve failed for incident %s", incident_id)
