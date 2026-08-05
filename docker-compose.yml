@@ -50,6 +50,8 @@ services:
       - NET_ADMIN
     cap_drop:
       - ALL
+    ports:
+      - "8000:8000"
     expose:
       - "8000"
     environment:
