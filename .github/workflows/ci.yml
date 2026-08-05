@@ -516,6 +516,7 @@ jobs:
       - name: ZAP Baseline Scan
         continue-on-error: true
         run: |
+          chmod -R 777 "$(pwd)"
           docker run --rm --network host \
             -v "$(pwd)":/zap/wrk \
             ghcr.io/zaproxy/zaproxy:stable \
