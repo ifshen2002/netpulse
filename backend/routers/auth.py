@@ -268,7 +268,13 @@ async def create_access_request(body: AccessRequestCreateIn, user: CurrentUser =
         pending = (await conn.execute(text("SELECT 1 FROM access_requests WHERE user_id = :user_id AND project_id = :project_id AND status = 'pending'"), {"user_id": user.id, "project_id": body.project_id})).fetchone()
         if pending:
             raise HTTPException(status_code=409, detail="An access request is already pending")
-        await conn.execute(text("INSERT INTO access_requests (id, user_id, organization_id, project_id, requested_role, reason, status, created_at) VALUES (:id, :user_id, :organization_id, :project_id, :requested_role, :reason, 'pending', NOW())"), {"id": request_id, "user_id": user.id, "organization_id": project[0], "project_id": body.project_id, "requested_role": body.requested_role, "reason": body.reason})
+        await conn.execute(text(
+            "INSERT INTO access_requests "
+            "(id, user_id, organization_id, project_id, requested_role, "
+            "reason, status, created_at) "
+            "VALUES (:id, :user_id, :organization_id, :project_id, "
+            ":requested_role, :reason, 'pending', NOW())"
+        ), {"id": request_id, "user_id": user.id, "organization_id": project[0], "project_id": body.project_id, "requested_role": body.requested_role, "reason": body.reason})
         await audit(conn, action="access_request.created", actor_user_id=user.id, resource_type="access_request", resource_id=request_id, organization_id=project[0], project_id=body.project_id, details={"requested_role": body.requested_role})
     return {"success": True, "data": {"id": request_id, "status": "pending"}}
 
@@ -283,7 +289,15 @@ async def list_my_access_requests(user: CurrentUser = Depends(get_current_user))
 @router.get("/admin/access-requests")
 async def list_access_requests(user: CurrentUser = Depends(require_platform_admin)):
     async with engine.connect() as conn:
-        rows = (await conn.execute(text("SELECT ar.id, u.email, u.display_name, ar.project_id, p.name, ar.requested_role, ar.reason, ar.status, ar.created_at FROM access_requests ar JOIN users u ON u.id = ar.user_id JOIN projects p ON p.id = ar.project_id WHERE ar.status = 'pending' ORDER BY ar.created_at"))).fetchall()
+        _sql = (
+            "SELECT ar.id, u.email, u.display_name, ar.project_id, p.name, "
+            "ar.requested_role, ar.reason, ar.status, ar.created_at "
+            "FROM access_requests ar "
+            "JOIN users u ON u.id = ar.user_id "
+            "JOIN projects p ON p.id = ar.project_id "
+            "WHERE ar.status = 'pending' ORDER BY ar.created_at"
+        )
+        rows = (await conn.execute(text(_sql))).fetchall()
     return {"success": True, "data": [{"id": r[0], "email": r[1], "display_name": r[2], "project_id": r[3], "project_name": r[4], "requested_role": r[5], "reason": r[6], "status": r[7], "created_at": r[8].isoformat()} for r in rows]}
 
 

@@ -3,7 +3,6 @@ import uuid
 
 os.environ["NETPULSE_TESTING"] = "1"
 
-import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
