@@ -219,7 +219,7 @@ jobs:
           done
           curl -s http://localhost:8000/api/health || exit 1
 
-- name: Container inspection
+      - name: Container inspection
         if: always()
         run: |
           echo "=== docker ps ===" > container-inspection.txt
