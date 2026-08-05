@@ -77,20 +77,6 @@ export default function EvidenceInspector({ endpointId }) {
   const metrics = endpointMetrics[endpointId]
   const timeline = [...(packetEvidenceTimeline[endpointId] || [])].reverse()
 
-  if (!evidence) {
-    return (
-      <div className="rounded p-3" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
-        <p className="text-xs" style={{ color: 'var(--gray)' }}>No evidence available for {endpointId}.</p>
-      </div>
-    )
-  }
-
-  // Find related alerts for this endpoint
-  const relatedAlerts = alerts.filter((a) => a.endpoint_id === endpointId)
-
-  // Find related incidents
-  const relatedIncidents = incidents.filter((i) => i.endpoint_id === endpointId)
-
   // Alert rules — fetched from backend for accurate evaluation
   const [alertRules, setAlertRules] = useState([])
 
@@ -105,6 +91,20 @@ export default function EvidenceInspector({ endpointId }) {
     })()
     return () => { cancelled = true }
   }, [endpointId])
+
+  if (!evidence) {
+    return (
+      <div className="rounded p-3" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
+        <p className="text-xs" style={{ color: 'var(--gray)' }}>No evidence available for {endpointId}.</p>
+      </div>
+    )
+  }
+
+  // Find related alerts for this endpoint
+  const relatedAlerts = alerts.filter((a) => a.endpoint_id === endpointId)
+
+  // Find related incidents
+  const relatedIncidents = incidents.filter((i) => i.endpoint_id === endpointId)
 
   const LEGACY_THRESHOLDS = [
     { metric: 'latency', operator: '>', threshold: 300, severity: 'critical', name: 'Legacy Latency' },
