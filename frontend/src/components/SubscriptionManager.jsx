@@ -46,7 +46,7 @@ export default function SubscriptionManager() {
     } catch {
       // backend not ready
     }
-  }, [])
+  }, [projectId])
 
   useEffect(() => {
     fetchSubs()
