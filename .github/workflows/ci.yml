@@ -461,22 +461,58 @@ jobs:
     name: DAST (OWASP ZAP)
     needs: [container-scan]
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: netpulse
+          POSTGRES_PASSWORD: netpulse
+          POSTGRES_DB: netpulse
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start services
-        run: |
-          docker compose up -d postgres redis
-          for i in $(seq 1 30); do
-            docker compose exec postgres pg_isready -U netpulse && break
-            sleep 1
-          done
-          docker compose exec postgres pg_isready -U netpulse || exit 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Build and start backend
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse
+        run: alembic upgrade head
+
+      - name: Start backend
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse
+          REDIS_URL: redis://localhost:6379/0
+          NETPULSE_TESTING: "1"
         run: |
-          docker compose build backend
-          docker compose up -d backend
+          nohup uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/uvicorn.log 2>&1 &
+          echo $! > /tmp/uvicorn.pid
           for i in $(seq 1 30); do
             curl -s http://localhost:8000/api/health && break
             sleep 1
@@ -503,6 +539,9 @@ jobs:
             zap-report.md
             zap-report.json
 
-      - name: Stop services
+      - name: Stop backend
         if: always()
-        run: docker compose down -v
+        run: |
+          if [ -f /tmp/uvicorn.pid ]; then
+            kill $(cat /tmp/uvicorn.pid) 2>/dev/null || true
+          fi
