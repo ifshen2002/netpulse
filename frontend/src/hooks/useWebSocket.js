@@ -2,13 +2,14 @@ import { useEffect, useRef } from 'react'
 import useMetricsStore from '../store/metricsStore'
 import { getAccessToken, getProjectId } from '../lib/api'
 
-const MAX_RETRIES = 5
-const RETRY_BASE_MS = 1000
+const MAX_RETRIES = 10
+const RETRY_BASE_MS = 800
 
 export default function useWebSocket() {
   const store = useMetricsStore
   const retries = useRef(0)
   const wsRef = useRef(null)
+  const timerRef = useRef(null)
 
   useEffect(() => {
     let stopped = false
@@ -16,27 +17,36 @@ export default function useWebSocket() {
     function connect() {
       if (stopped || retries.current >= MAX_RETRIES) return
 
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const token = getAccessToken()
       const projectId = getProjectId()
+      // Wait until we have both a token AND a project_id.
+      // On first login, fetchProjectRole saves the project_id to
+      // localStorage AFTER the login API returns. If we connect
+      // before that, the WS will have no project_id and won't
+      // receive project-scoped broadcasts.
+      if (!projectId) {
+        timerRef.current = setTimeout(connect, 500)
+        return
+      }
+
+      const token = getAccessToken()
+      if (!token) {
+        timerRef.current = setTimeout(connect, 500)
+        return
+      }
+
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
       const url = new URL(`${proto}//${location.host}/ws`)
-      if (token) {
-        url.searchParams.set('access_token', token)
-      }
-      if (projectId) {
-        url.searchParams.set('project_id', projectId)
-      }
+      url.searchParams.set('access_token', token)
+      url.searchParams.set('project_id', projectId)
+
       const ws = new WebSocket(url)
       wsRef.current = ws
 
       ws.onopen = () => {
         retries.current = 0
         store.getState().setConnected(true)
-        store.getState().fetchChaosStatus()
-        store.getState().fetchInitialMetrics()
         store.getState().fetchEndpoints()
         store.getState().fetchInitialEndpoints()
-        store.getState().fetchNetworkChaosStatus()
       }
 
       ws.onmessage = (msg) => {
@@ -83,7 +93,7 @@ export default function useWebSocket() {
         if (stopped) return
         const delay = Math.min(RETRY_BASE_MS * 2 ** retries.current, 30000)
         retries.current += 1
-        setTimeout(connect, delay)
+        timerRef.current = setTimeout(connect, delay)
       }
 
       ws.onerror = () => {
@@ -98,6 +108,9 @@ export default function useWebSocket() {
       if (wsRef.current) {
         wsRef.current.close()
         wsRef.current = null
+      }
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
       }
     }
   }, [store])
