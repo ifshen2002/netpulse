@@ -58,6 +58,9 @@ jobs:
 
       - name: Run unit tests
         working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse
+          REDIS_URL: redis://localhost:6379/0
         run: pytest tests/unit/ -v --no-cov --junitxml=test-results-unit.xml
 
       - name: Upload unit test results
