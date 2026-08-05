@@ -48,6 +48,7 @@ services:
     build: ./backend
     cap_add:
       - NET_ADMIN
+      - NET_RAW
     cap_drop:
       - ALL
     ports:
