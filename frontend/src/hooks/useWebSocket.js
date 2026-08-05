@@ -19,13 +19,22 @@ export default function useWebSocket() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
       const token = getAccessToken()
       const projectId = getProjectId()
+
+      // Wait until we have BOTH — connecting with a token but
+      // without project_id means the WS will be accepted but
+      // won't receive project-scoped broadcasts (fetchProjectRole
+      // may not have saved project_id to localStorage yet).
+      if (!token || !projectId) {
+        // Not ready yet — retry after a short delay
+        retries.current += 1
+        const delay = Math.min(RETRY_BASE_MS * 2 ** retries.current, 30000)
+        setTimeout(connect, delay)
+        return
+      }
+
       const url = new URL(`${proto}//${location.host}/ws`)
-      if (token) {
-        url.searchParams.set('access_token', token)
-      }
-      if (projectId) {
-        url.searchParams.set('project_id', projectId)
-      }
+      url.searchParams.set('access_token', token)
+      url.searchParams.set('project_id', projectId)
       const ws = new WebSocket(url)
       wsRef.current = ws
 
