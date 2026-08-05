@@ -99,6 +99,8 @@ const useAuthStore = create((set, get) => ({
         set({ projectRole: match?.role || null })
       } else if (projects.length === 1) {
         set({ projectRole: projects[0].role })
+        const { setProjectId } = await import('../lib/api')
+        setProjectId(projects[0].id)
       }
     } catch {
       // no-op
