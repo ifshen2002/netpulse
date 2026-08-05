@@ -90,7 +90,7 @@ async def run_probe(endpoint: str, endpoint_id: str) -> dict:
             "ping",
             "-c", "1",
             "-W", "2",
-            endpoint,
+            "--", endpoint,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

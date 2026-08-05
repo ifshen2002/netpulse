@@ -47,7 +47,7 @@ async def test_evaluate_cpu_high_fires_alert():
     mock_redis.get.return_value = _make_metric(cpu=85.0)
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -63,7 +63,7 @@ async def test_evaluate_latency_spike_fires_alert():
     mock_redis.get.return_value = _make_metric(latency=600.0)
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -79,7 +79,7 @@ async def test_evaluate_normal_metrics_no_alert():
     mock_redis.get.return_value = _make_metric()
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -95,7 +95,7 @@ async def test_dedup_cooldown_blocks_repeat():
     mock_redis.get.return_value = _make_metric(cpu=90.0)
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -113,7 +113,7 @@ async def test_dedup_cooldown_expires():
     mock_redis.get.return_value = _make_metric(cpu=90.0)
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -130,7 +130,7 @@ async def test_heartbeat_timeout_fires():
     mock_redis.get.return_value = _make_metric()
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):

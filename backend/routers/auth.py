@@ -1,5 +1,8 @@
 """Identity, project access-request, and audit APIs."""
 
+import logging
+import os
+
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
@@ -17,6 +20,10 @@ from services.auth import (
     require_project_role,
     verify_password,
 )
+
+logger = logging.getLogger(__name__)
+
+_NETPULSE_ADMIN_EMAIL = os.environ.get("NETPULSE_ADMIN_EMAIL", "").strip().lower()
 
 router = APIRouter(prefix="/api", tags=["identity"])
 
@@ -98,7 +105,19 @@ async def register(body: RegisterIn):
         if exists:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email is already registered")
         first_user = (await conn.execute(text("SELECT COUNT(*) FROM users"))).fetchone()[0] == 0
-        user = CurrentUser(new_id(), email, body.display_name.strip(), first_user)
+        # Determine if this user should be platform_admin.
+        # If NETPULSE_ADMIN_EMAIL is set, only the matching email gets admin.
+        # If unset, the first user becomes admin (backward-compat dev mode) with a warning.
+        if _NETPULSE_ADMIN_EMAIL:
+            is_admin = email == _NETPULSE_ADMIN_EMAIL
+        else:
+            is_admin = first_user
+            if is_admin:
+                logger.warning(
+                    "NETPULSE_ADMIN_EMAIL is not set — first user '%s' becomes platform_admin. "
+                    "Set NETPULSE_ADMIN_EMAIL in production.", email,
+                )
+        user = CurrentUser(new_id(), email, body.display_name.strip(), is_admin)
         await conn.execute(
             text(
                 "INSERT INTO users (id, email, password_hash, display_name, is_platform_admin, is_active, created_at) "

@@ -1,25 +1,16 @@
 import json
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 from db import engine
-from main import app
-from redis_client import client as redis_client
-
-
-@pytest_asyncio.fixture
-async def client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+import redis_client
 
 
 @pytest.mark.asyncio
-async def test_nodes_api_returns_three(client):
-    response = await client.get("/api/nodes")
+async def test_nodes_api_returns_three(client, editor_headers_no_project):
+    """V1 synthetic nodes have NULL project_id; query without X-Project-ID."""
+    response = await client.get("/api/nodes", headers=editor_headers_no_project)
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -29,7 +20,8 @@ async def test_nodes_api_returns_three(client):
 
 
 @pytest.mark.asyncio
-async def test_metrics_api_reads_inserted_data(client):
+async def test_metrics_api_reads_inserted_data(client, editor_headers_no_project):
+    h = editor_headers_no_project
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -39,7 +31,7 @@ async def test_metrics_api_reads_inserted_data(client):
             ),
         )
 
-    response = await client.get("/api/metrics/node-1?limit=1")
+    response = await client.get("/api/metrics/node-1?limit=1", headers=h)
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -50,8 +42,8 @@ async def test_metrics_api_reads_inserted_data(client):
 
 
 @pytest.mark.asyncio
-async def test_metrics_api_unknown_node_returns_empty(client):
-    response = await client.get("/api/metrics/node-unknown-xyz?limit=5")
+async def test_metrics_api_unknown_node_returns_empty(client, editor_headers_no_project):
+    response = await client.get("/api/metrics/node-unknown-xyz?limit=5", headers=editor_headers_no_project)
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -59,7 +51,8 @@ async def test_metrics_api_unknown_node_returns_empty(client):
 
 
 @pytest.mark.asyncio
-async def test_retention_deletes_old_keeps_recent(client):
+async def test_retention_deletes_old_keeps_recent(client, editor_headers_no_project):
+    h = editor_headers_no_project
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -104,38 +97,44 @@ async def test_retention_deletes_old_keeps_recent(client):
         old = result.scalar()
         assert old == 0, "Old metrics should be deleted"
 
+    # Touch headers so the fixture dependency is satisfied
+    assert h["Authorization"].startswith("Bearer ")
+
 
 @pytest.mark.asyncio
-async def test_db_write_then_read(client):
+async def test_db_write_then_read():
+    """Write a metric with a unique marker value, read it back by that marker."""
+    test_cpu = 99.9
     async with engine.begin() as conn:
-        await conn.execute(
+        result = await conn.execute(
             text(
                 "INSERT INTO metrics (node_id, timestamp, cpu, memory, disk, "
                 "latency_ms, packet_loss_pct, status) "
-                "VALUES ('node-2', NOW(), 33.0, 44.0, 22.0, 7.0, 0.5, 'green')"
+                "VALUES ('node-1', NOW(), :cpu, 44.0, 22.0, 7.0, 0.5, 'green') "
+                "RETURNING id"
             ),
+            {"cpu": test_cpu},
         )
+        row_id = result.scalar()
 
     async with engine.connect() as conn:
         result = await conn.execute(
-            text(
-                "SELECT cpu, memory FROM metrics "
-                "WHERE node_id = 'node-2' ORDER BY id DESC LIMIT 1"
-            )
+            text("SELECT cpu FROM metrics WHERE id = :id"),
+            {"id": row_id},
         )
         row = result.first()
         assert row is not None
-        assert row.cpu == 33.0
+        assert row.cpu == test_cpu
 
 
 @pytest.mark.asyncio
 async def test_redis_cache_read_write():
     test_data = {"node_id": "node-1", "cpu": 55.0, "status": "green"}
-    await redis_client.set("metrics:latest:test-key", json.dumps(test_data))
+    await redis_client.client.set("metrics:latest:test-key", json.dumps(test_data))
 
-    val = await redis_client.get("metrics:latest:test-key")
+    val = await redis_client.client.get("metrics:latest:test-key")
     assert val is not None
     parsed = json.loads(val)
     assert parsed["cpu"] == 55.0
 
-    await redis_client.delete("metrics:latest:test-key")
+    await redis_client.client.delete("metrics:latest:test-key")

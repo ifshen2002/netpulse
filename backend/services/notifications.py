@@ -69,11 +69,7 @@ async def match_and_deliver(
 
 
 async def broadcast_notification(manager, notification_id: str, user_id: str, title: str, body: str, severity: str, alert_id: str, incident_id: str | None, project_id: str) -> None:
-    """Push a notification_created event to all connected clients.
-
-    In production this would target the specific user's connection. For the current
-    single-instance broadcast model, the event is sent to all clients; each client
-    filters by user_id in the frontend handler."""
+    """Push a notification_created event to the target user's connections only."""
     await manager.broadcast(
         json.dumps(
             {
@@ -87,5 +83,6 @@ async def broadcast_notification(manager, notification_id: str, user_id: str, ti
                 "incident_id": incident_id,
                 "project_id": project_id,
             }
-        )
+        ),
+        user_id=user_id,
     )

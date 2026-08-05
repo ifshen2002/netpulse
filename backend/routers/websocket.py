@@ -13,22 +13,49 @@ router = APIRouter()
 
 
 class ConnectionManager:
+    """Per-connection tracking with user/project affinity for scoped broadcasts.
+
+    Each connection is tagged with its authenticated user_id and optional
+    project_id so that broadcast() can filter events to the right audience:
+
+    - Notification events → user_id filter (only the target user)
+    - Monitoring events  → project_id filter (only members of that project)
+    - Legacy V1 events   → no filter (all clients, backward compat)
+    """
+
     def __init__(self) -> None:
-        self._active: set[WebSocket] = set()
+        self._connections: dict[WebSocket, dict] = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, websocket: WebSocket, *, user_id: str, project_id: str | None = None) -> None:
         await websocket.accept()
         async with self._lock:
-            self._active.add(websocket)
+            self._connections[websocket] = {"user_id": user_id, "project_id": project_id}
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
-            self._active.discard(websocket)
+            self._connections.pop(websocket, None)
 
-    async def broadcast(self, message: str) -> None:
+    async def broadcast(self, message: str, *, project_id: str | None = None, user_id: str | None = None) -> None:
+        """Send message to matching connections.
+
+        - If *only* user_id is set → deliver to that user (notifications).
+        - If *only* project_id is set → deliver to connections in that project.
+        - If both are set → deliver to that user within that project.
+        - If neither is set → broadcast to all (V1 legacy).
+        """
         async with self._lock:
-            clients = list(self._active)
+            if project_id is not None or user_id is not None:
+                targets = [
+                    ws for ws, meta in self._connections.items()
+                    if (project_id is None or meta["project_id"] == project_id)
+                    and (user_id is None or meta["user_id"] == user_id)
+                ]
+            else:
+                targets = list(self._connections)
+
+        if not targets:
+            return
 
         async def _send(ws: WebSocket) -> WebSocket | None:
             try:
@@ -37,14 +64,14 @@ class ConnectionManager:
             except Exception:
                 return ws
 
-        results = await asyncio.gather(*[_send(ws) for ws in clients], return_exceptions=True)
+        results = await asyncio.gather(*[_send(ws) for ws in targets], return_exceptions=True)
         for failed in results:
             if failed is not None and not isinstance(failed, Exception):
                 await self.disconnect(failed)
 
     @property
     def count(self) -> int:
-        return len(self._active)
+        return len(self._connections)
 
 
 manager = ConnectionManager()
@@ -84,7 +111,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             if member is None and not (is_admin and is_admin[0]):
                 await websocket.close(code=1008)
                 return
-    await manager.connect(websocket)
+    await manager.connect(websocket, user_id=user_id, project_id=project_id)
     try:
         while True:
             await websocket.receive_text()

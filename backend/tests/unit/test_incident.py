@@ -47,7 +47,7 @@ async def test_first_alert_creates_incident():
     mock_redis.get.return_value = _metric(cpu=85.0)
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -65,7 +65,7 @@ async def test_second_alert_same_incident():
     mock_redis.get.return_value = _metric(cpu=90.0)
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -83,7 +83,7 @@ async def test_three_clean_evals_close_incident():
     mock_redis.get.return_value = _metric()
 
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -112,7 +112,7 @@ async def test_alert_after_close_creates_new_incident():
 
     # First alert → opens incident
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):
@@ -125,7 +125,7 @@ async def test_alert_after_close_creates_new_incident():
     # Second alert → creates new incident
     alerting._cooldowns.clear()
     with (
-        patch("services.alerting.redis", mock_redis),
+        patch("redis_client.client", mock_redis),
         patch("services.alerting.engine", _mock_engine()),
         patch("services.alerting.manager.broadcast", AsyncMock()),
     ):

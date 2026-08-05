@@ -173,14 +173,20 @@ async def create_alert_rule(body: AlertRuleCreateIn, user: CurrentUser = Depends
 
 
 @router.put("/alert-rules/{rule_id}")
-async def update_alert_rule(rule_id: str, body: AlertRuleUpdateIn, user: CurrentUser = Depends(require_project_editor)):
+async def update_alert_rule(
+    rule_id: str,
+    body: AlertRuleUpdateIn,
+    user: CurrentUser = Depends(require_project_editor),
+    project_id: str | None = Header(default=None, alias="X-Project-ID"),
+):
     async with engine.begin() as conn:
+        clause, clause_params = project_clause(project_id)
         existing = (await conn.execute(
             text(
                 "SELECT id, name, metric, operator, threshold, "
-                "severity, enabled FROM alert_rules WHERE id = :id"
+                f"severity, enabled FROM alert_rules WHERE id = :id{clause}"
             ),
-            {"id": rule_id},
+            {"id": rule_id, **clause_params},
         )).fetchone()
 
         if existing is None:
@@ -213,6 +219,7 @@ async def update_alert_rule(rule_id: str, body: AlertRuleUpdateIn, user: Current
                 resource_type="alert_rule",
                 resource_id=rule_id,
                 details=updates,
+                project_id=project_id,
             )
 
     await reload_rules()
@@ -220,10 +227,16 @@ async def update_alert_rule(rule_id: str, body: AlertRuleUpdateIn, user: Current
 
 
 @router.delete("/alert-rules/{rule_id}")
-async def delete_alert_rule(rule_id: str, user: CurrentUser = Depends(require_project_editor)):
+async def delete_alert_rule(
+    rule_id: str,
+    user: CurrentUser = Depends(require_project_editor),
+    project_id: str | None = Header(default=None, alias="X-Project-ID"),
+):
     async with engine.begin() as conn:
+        clause, clause_params = project_clause(project_id)
         result = await conn.execute(
-            text("DELETE FROM alert_rules WHERE id = :id"), {"id": rule_id}
+            text(f"DELETE FROM alert_rules WHERE id = :id{clause}"),
+            {"id": rule_id, **clause_params},
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Alert rule not found")
@@ -233,6 +246,7 @@ async def delete_alert_rule(rule_id: str, user: CurrentUser = Depends(require_pr
             actor_user_id=user.id,
             resource_type="alert_rule",
             resource_id=rule_id,
+            project_id=project_id,
         )
 
     await reload_rules()
@@ -240,10 +254,16 @@ async def delete_alert_rule(rule_id: str, user: CurrentUser = Depends(require_pr
 
 
 @router.patch("/alert-rules/{rule_id}/toggle")
-async def toggle_alert_rule(rule_id: str, user: CurrentUser = Depends(require_project_editor)):
+async def toggle_alert_rule(
+    rule_id: str,
+    user: CurrentUser = Depends(require_project_editor),
+    project_id: str | None = Header(default=None, alias="X-Project-ID"),
+):
     async with engine.begin() as conn:
+        clause, clause_params = project_clause(project_id)
         existing = (await conn.execute(
-            text("SELECT enabled FROM alert_rules WHERE id = :id"), {"id": rule_id}
+            text(f"SELECT enabled FROM alert_rules WHERE id = :id{clause}"),
+            {"id": rule_id, **clause_params},
         )).fetchone()
 
         if existing is None:
@@ -261,6 +281,7 @@ async def toggle_alert_rule(rule_id: str, user: CurrentUser = Depends(require_pr
             resource_type="alert_rule",
             resource_id=rule_id,
             details={"enabled": new_val},
+            project_id=project_id,
         )
 
     await reload_rules()

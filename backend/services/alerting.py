@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from db import engine
-from redis_client import client as redis
+import redis_client
 from routers.websocket import manager
 
 logger = logging.getLogger(__name__)
@@ -291,7 +291,7 @@ async def resolve_for_node(node_id: str, now: datetime | None = None) -> None:
 # ── public API ────────────────────────────────────────────────────
 
 async def evaluate(node_id: str) -> list[dict]:
-    raw = await redis.get(f"metrics:latest:{node_id}")
+    raw = await redis_client.client.get(f"metrics:latest:{node_id}")
     if raw is None:
         return []
 
@@ -443,6 +443,17 @@ async def _create_endpoint_incident(endpoint_id: str, alert_type: str) -> str:
     incident_id = str(uuid.uuid4())
     title = f"{endpoint_id} {alert_type}"
     now = _utcnow()
+
+    # Look up project_id for broadcast scoping
+    ep_project_id = None
+    async with engine.connect() as conn:
+        row = (await conn.execute(
+            text("SELECT project_id FROM endpoints WHERE id = :id"),
+            {"id": endpoint_id},
+        )).fetchone()
+        if row:
+            ep_project_id = row[0]
+
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -467,7 +478,8 @@ async def _create_endpoint_incident(endpoint_id: str, alert_type: str) -> str:
                 "endpoint_id": endpoint_id,
                 "timestamp": now.isoformat(),
             }
-        )
+        ),
+        project_id=ep_project_id,
     )
     return incident_id
 
@@ -478,6 +490,17 @@ async def _resolve_endpoint_incident(endpoint_id: str) -> None:
         return
 
     now = _utcnow()
+
+    # Look up project_id for broadcast scoping
+    ep_project_id = None
+    async with engine.connect() as conn:
+        row = (await conn.execute(
+            text("SELECT project_id FROM endpoints WHERE id = :id"),
+            {"id": endpoint_id},
+        )).fetchone()
+        if row:
+            ep_project_id = row[0]
+
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -511,7 +534,8 @@ async def _resolve_endpoint_incident(endpoint_id: str) -> None:
                 "endpoint_id": endpoint_id,
                 "timestamp": now.isoformat(),
             }
-        )
+        ),
+        project_id=ep_project_id,
     )
 
     # Auto-resolve notifications for this incident
@@ -554,7 +578,8 @@ async def _fire_endpoint_alert(
                 "evidence_id": evidence_id,
                 "timestamp": now.isoformat(),
             }
-        )
+        ),
+        project_id=project_id,
     )
 
     # Deliver in-app notifications to matching subscribers
@@ -577,7 +602,7 @@ async def _handle_endpoint_recovery(endpoint_id: str) -> None:
 
 async def evaluate_endpoint(endpoint_id: str) -> list[dict]:
     """Evaluate endpoint telemetry against alert rules."""
-    raw = await redis.get(f"metrics:latest:endpoint:{endpoint_id}")
+    raw = await redis_client.client.get(f"metrics:latest:endpoint:{endpoint_id}")
     if raw is None:
         return []
 

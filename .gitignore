@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 .pytest_cache/
 .env
+.env.*
 *.egg-info/
 dist/
 build/
@@ -10,3 +11,19 @@ pgdata/
 node_modules/
 .claude/
 htmlcov/
+.coverage
+coverage.xml
+
+# Secrets & certificates
+*.pem
+*.key
+*.p12
+*.crt
+*.pfx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups (local copies only)
+backups/

@@ -1,15 +1,16 @@
 """V2 endpoint management REST API — single source of truth for monitoring targets."""
 
+import ipaddress
 import re
 import socket
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
 from db import engine
-from redis_client import client as redis
+import redis_client
 from services.auth import CurrentUser, audit, project_clause, require_project_editor, require_project_member
 from services.probe import get_window_seconds, set_window_seconds
 
@@ -17,6 +18,28 @@ router = APIRouter(prefix="/api", tags=["endpoints"])
 
 _RESERVED = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 _LOOPBACK_RE = re.compile(r"^127\.\d+\.\d+\.\d+$")
+
+# ── SSRF protection: block private, link-local, and special-purpose ranges ──
+_SSRF_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),        # Private (RFC 1918)
+    ipaddress.ip_network("172.16.0.0/12"),      # Private (RFC 1918)
+    ipaddress.ip_network("192.168.0.0/16"),     # Private (RFC 1918)
+    ipaddress.ip_network("169.254.0.0/16"),     # Link-local / cloud metadata
+    ipaddress.ip_network("100.64.0.0/10"),      # CGNAT (RFC 6598)
+    ipaddress.ip_network("224.0.0.0/4"),        # Multicast
+    ipaddress.ip_network("240.0.0.0/4"),        # Reserved / future use
+]
+
+
+def _is_private_ip(host: str) -> bool:
+    """Return True if host is a private, link-local, or special-purpose IPv4 address."""
+    try:
+        addr = ipaddress.IPv4Address(host)
+    except (ipaddress.AddressValueError, ValueError):
+        return False
+    if addr.is_loopback or addr.is_unspecified or addr.is_multicast or addr.is_reserved:
+        return True
+    return any(addr in net for net in _SSRF_BLOCKED_NETWORKS)
 
 
 def _validate_endpoint(v: str) -> str:
@@ -28,6 +51,8 @@ def _validate_endpoint(v: str) -> str:
         raise ValueError("endpoint is reserved and not monitorable")
     if _LOOPBACK_RE.match(lower):
         raise ValueError("loopback addresses are not monitorable")
+    if _is_private_ip(lower):
+        raise ValueError("private and link-local addresses are not monitorable")
     return stripped
 
 
@@ -205,8 +230,8 @@ async def create_endpoint(
                 details={"name": body.name, "target_host": body.target_host},
                 project_id=project_id,
             )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to create endpoint — check server logs")
 
     return {
         "success": True,
@@ -312,8 +337,8 @@ async def delete_endpoint(
             project_id=project_id,
         )
 
-    await redis.delete(f"metrics:latest:endpoint:{endpoint_id}")
-    await redis.delete(f"packet_evidence:latest:{endpoint_id}")
+    await redis_client.client.delete(f"metrics:latest:endpoint:{endpoint_id}")
+    await redis_client.client.delete(f"packet_evidence:latest:{endpoint_id}")
 
     return {"success": True, "data": {"deleted": endpoint_id}}
 
@@ -361,7 +386,7 @@ async def toggle_endpoint(
 @router.get("/endpoints/{endpoint_id}/metrics")
 async def get_endpoint_metrics(
     endpoint_id: str,
-    seconds: int = 180,
+    seconds: int = Query(180, ge=10, le=3600),
     user: CurrentUser = Depends(require_project_member),
     project_id: str | None = Header(default=None, alias="X-Project-ID"),
 ):
@@ -410,7 +435,7 @@ async def get_endpoint_metrics(
 @router.get("/endpoints/{endpoint_id}/evidence")
 async def get_packet_evidence(
     endpoint_id: str,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=500),
     user: CurrentUser = Depends(require_project_member),
     project_id: str | None = Header(default=None, alias="X-Project-ID"),
 ):

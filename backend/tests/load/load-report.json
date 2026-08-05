@@ -1,0 +1,67 @@
+{
+  "target": "http://localhost:8000",
+  "concurrent_users": 10,
+  "configured_duration_s": 5,
+  "actual_duration_s": 5.03,
+  "total_requests": 1354,
+  "throughput_rps": 269.17,
+  "endpoints": {
+    "health_check": {
+      "count": 435,
+      "success_count": 435,
+      "error_count": 0,
+      "error_rate_pct": 0.0,
+      "latency_ms": {
+        "min": 17.77,
+        "max": 331.39,
+        "mean": 34.56,
+        "median": 23.99,
+        "p95": 97.96,
+        "p99": 183.3
+      }
+    },
+    "list_alerts": {
+      "count": 269,
+      "success_count": 0,
+      "error_count": 0,
+      "error_rate_pct": 0.0,
+      "latency_ms": {
+        "min": 11.7,
+        "max": 271.42,
+        "mean": 37.29,
+        "median": 19.16,
+        "p95": 98.62,
+        "p99": 210.09
+      }
+    },
+    "list_endpoints": {
+      "count": 401,
+      "success_count": 0,
+      "error_count": 0,
+      "error_rate_pct": 0.0,
+      "latency_ms": {
+        "min": 11.99,
+        "max": 245.72,
+        "mean": 37.56,
+        "median": 19.67,
+        "p95": 112.34,
+        "p99": 170.93
+      }
+    },
+    "list_incidents": {
+      "count": 249,
+      "success_count": 0,
+      "error_count": 0,
+      "error_rate_pct": 0.0,
+      "latency_ms": {
+        "min": 11.32,
+        "max": 249.26,
+        "mean": 40.33,
+        "median": 19.24,
+        "p95": 133.81,
+        "p99": 211.17
+      }
+    }
+  },
+  "timestamp": "2026-08-05T14:22:34Z"
+}

@@ -66,15 +66,16 @@ def reset_everything():
 
 
 @pytest.mark.asyncio
-async def test_demo_flow_full_cycle(client):
+async def test_demo_flow_full_cycle(client, editor_headers_no_project):
+    h = editor_headers_no_project
     # ═══ Phase 1: Normal operation ═══════════════════════════════════
     _heartbeats["node-2"] = datetime.now(timezone.utc)
 
-    resp = await client.get("/api/metrics/node-2?limit=1")
+    resp = await client.get("/api/metrics/node-2?limit=1", headers=h)
     assert resp.status_code == 200
     assert resp.json()["success"] is True
 
-    resp = await client.get("/api/chaos/status")
+    resp = await client.get("/api/chaos/status", headers=h)
     assert resp.status_code == 200
     status_data = resp.json()
     assert status_data["success"] is True
@@ -84,6 +85,7 @@ async def test_demo_flow_full_cycle(client):
     resp = await client.post(
         "/api/chaos/inject",
         json={"node_id": "node-2", "chaos_type": "cpu_spike", "config": {"intensity": "high"}},
+        headers=h,
     )
     assert resp.status_code == 200
     inject_data = resp.json()
@@ -92,21 +94,19 @@ async def test_demo_flow_full_cycle(client):
     assert event_id is not None
 
     # Verify chaos appears in status
-    resp = await client.get("/api/chaos/status")
+    resp = await client.get("/api/chaos/status", headers=h)
     status_data = resp.json()
     assert "cpu_spike" in status_data["data"]["active"].get("node-2", {})
 
     # ═══ Phase 3: Alert already fired by force-evaluation ═══════════════
-    # The API inject endpoint now force-evaluates immediately, so the alert
-    # and incident are already created. Verify via API.
-    resp = await client.get("/api/alerts?node_id=node-2&limit=5")
+    resp = await client.get("/api/alerts?node_id=node-2&limit=5", headers=h)
     alert_data = resp.json()
     assert alert_data["success"] is True
     cpu_alerts = [a for a in alert_data["data"] if a["alert_type"] == "cpu_high"]
     assert len(cpu_alerts) >= 1, "cpu_high alert must fire during inject force-eval"
 
     # ═══ Phase 4: Verify incident opened ═════════════════════════════════
-    resp = await client.get("/api/incidents?status=open&limit=5")
+    resp = await client.get("/api/incidents?status=open&limit=5", headers=h)
     incident_data = resp.json()
     assert incident_data["success"] is True
     assert len(incident_data["data"]) >= 1
@@ -114,17 +114,17 @@ async def test_demo_flow_full_cycle(client):
     assert incident_data["data"][0]["status"] == "open"
 
     # ═══ Phase 5: Recover — incident closes immediately ═════════════════
-    resp = await client.post("/api/chaos/recover", json={"node_id": "node-2"})
+    resp = await client.post("/api/chaos/recover", json={"node_id": "node-2"}, headers=h)
     recover_data = resp.json()
     assert recover_data["success"] is True
     assert recover_data["data"]["removed"] >= 1
 
-    resp = await client.get("/api/chaos/status")
+    resp = await client.get("/api/chaos/status", headers=h)
     status_data = resp.json()
     assert status_data["data"]["active"].get("node-2", {}) == {}
 
     # Incident is closed immediately by recover → resolve_for_node
-    resp = await client.get(f"/api/incidents/{incident_id}")
+    resp = await client.get(f"/api/incidents/{incident_id}", headers=h)
     detail = resp.json()
     assert detail["success"] is True
     assert detail["data"]["status"] == "closed"

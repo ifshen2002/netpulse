@@ -1,6 +1,6 @@
 """Notification subscriptions and in-app notification REST API."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy import text
 
@@ -69,7 +69,11 @@ async def list_subscriptions(user: CurrentUser = Depends(get_current_user)):
 
 
 @router.post("/subscriptions", status_code=201)
-async def create_subscription(body: SubscriptionCreateIn, user: CurrentUser = Depends(get_current_user)):
+async def create_subscription(
+    body: SubscriptionCreateIn,
+    user: CurrentUser = Depends(get_current_user),
+    project_id: str | None = Header(default=None, alias="X-Project-ID"),
+):
     sub_id = new_id()
     async with engine.begin() as conn:
         # Verify project exists
@@ -78,6 +82,15 @@ async def create_subscription(body: SubscriptionCreateIn, user: CurrentUser = De
         )).fetchone()
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
+
+        # Verify user is a member of the project (or platform_admin)
+        if not user.is_platform_admin:
+            member = (await conn.execute(
+                text("SELECT 1 FROM memberships WHERE user_id = :uid AND project_id = :pid"),
+                {"uid": user.id, "pid": body.project_id},
+            )).fetchone()
+            if member is None:
+                raise HTTPException(status_code=403, detail="Project membership required to subscribe")
 
         # Check for duplicate
         existing = (await conn.execute(

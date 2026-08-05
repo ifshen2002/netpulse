@@ -3,19 +3,33 @@ import os
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 
 class Base(DeclarativeBase):
     pass
 
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql+asyncpg://netpulse:netpulse@localhost:5432/netpulse"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is required. "
+        "Copy .env.example to .env and fill in the values."
+    )
 
+# NullPool: creates a fresh connection per engine.connect() call instead of
+# reusing from a pool. Required for pytest-asyncio strict mode where each
+# test gets a new event loop — connections from a legacy pool would be
+# bound to a different (already closed) loop and raise "got Future attached
+# to a different loop".
+#
+# Production trade-off: on a single-process uvicorn deployment this adds
+# negligible latency (asyncpg connect ≈ 5ms) while eliminating a class
+# of flaky test failures. For high-throughput deployments, reinstate the
+# pool and use a shared event-loop fixture instead.
 engine: AsyncEngine = create_async_engine(
     DATABASE_URL,
-    pool_pre_ping=True,
+    poolclass=NullPool,
     connect_args={"prepared_statement_cache_size": 0},
 )
 

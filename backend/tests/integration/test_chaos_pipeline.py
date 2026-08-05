@@ -10,11 +10,9 @@ code paths the scheduler calls at runtime.
 import json
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
 
-from main import app
-from redis_client import client as redis
+from main import app  # noqa: F401
+import redis_client
 from services.chaos import (
     _active,
     _effect_values,
@@ -44,13 +42,6 @@ def _clean_state():
     _heartbeats.clear()
 
 
-@pytest_asyncio.fixture
-async def client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-
-
 @pytest.fixture(autouse=True)
 def reset_state():
     _clean_state()
@@ -73,7 +64,7 @@ async def _write_and_evaluate(m):
     """Write metrics to Redis and run alert evaluation (as scheduler does)."""
     if m is None:
         return []
-    await redis.set(f"metrics:latest:{m['node_id']}", json.dumps(m))
+    await redis_client.client.set(f"metrics:latest:{m['node_id']}", json.dumps(m))
     return await evaluate_node(m["node_id"])
 
 
@@ -138,11 +129,12 @@ async def test_high_cpu_triggers_alert_and_incident():
 
 
 @pytest.mark.asyncio
-async def test_cpu_injection_via_api_triggers_alert(client):
+async def test_cpu_injection_via_api_triggers_alert(client, editor_headers_no_project):
     """
     CONTRACT: Injecting CRITICAL CPU via the public API must result in
     an alert + incident visible via the alerts API within 30 seconds.
     """
+    h = editor_headers_no_project
     # Inject CRITICAL CPU chaos
     resp = await client.post(
         "/api/chaos/inject",
@@ -151,13 +143,14 @@ async def test_cpu_injection_via_api_triggers_alert(client):
             "chaos_type": "cpu_spike",
             "config": {"intensity": "critical"},
         },
+        headers=h,
     )
     assert resp.status_code == 200
     assert resp.json()["success"] is True
 
     # After injection, the router force-evaluates, so alert should be
     # visible immediately via the API.
-    resp = await client.get("/api/alerts?node_id=node-2&limit=5")
+    resp = await client.get("/api/alerts?node_id=node-2&limit=5", headers=h)
     data = resp.json()
     assert data["success"] is True
     cpu_alerts = [a for a in data["data"] if a["alert_type"] == "cpu_high"]
@@ -170,7 +163,7 @@ async def test_cpu_injection_via_api_triggers_alert(client):
     assert alert["incident_id"] is not None, "Alert must be linked to an incident"
 
     # Verify incident exists and is open
-    resp = await client.get(f"/api/incidents/{alert['incident_id']}")
+    resp = await client.get(f"/api/incidents/{alert['incident_id']}", headers=h)
     inc_data = resp.json()
     assert inc_data["success"] is True
     assert inc_data["data"]["status"] == "open"
@@ -201,13 +194,14 @@ async def test_low_cpu_below_threshold_no_alert():
 
 
 @pytest.mark.asyncio
-async def test_chaos_injection_clears_cooldown(client):
+async def test_chaos_injection_clears_cooldown(client, editor_headers_no_project):
     """
     CONTRACT: Injecting chaos via the API must clear any existing
     cooldown so the alert fires immediately.
     """
+    h = editor_headers_no_project
     # First, create a natural alert to set cooldown
-    await redis.set(
+    await redis_client.client.set(
         "metrics:latest:node-2",
         json.dumps({
             "node_id": "node-2",
@@ -231,6 +225,7 @@ async def test_chaos_injection_clears_cooldown(client):
             "chaos_type": "cpu_spike",
             "config": {"intensity": "critical"},
         },
+        headers=h,
     )
     assert resp.status_code == 200
     assert resp.json()["success"] is True
@@ -238,7 +233,7 @@ async def test_chaos_injection_clears_cooldown(client):
     # After API inject, verify an alert fired — this proves the cooldown was
     # cleared (otherwise the force-evaluate would have been cooldown-blocked).
     # The new alert sets a fresh cooldown, so we check the API, not _cooldowns.
-    resp = await client.get("/api/alerts?node_id=node-2&limit=3")
+    resp = await client.get("/api/alerts?node_id=node-2&limit=3", headers=h)
     data = resp.json()
     assert data["success"] is True
     cpu_alerts = [a for a in data["data"] if a["alert_type"] == "cpu_high"]
@@ -277,7 +272,7 @@ async def test_incident_persists_while_chaos_active():
     # Run several evaluations with low CPU — incident must stay open
     # because chaos is still active
     for _ in range(5):
-        await redis.set(
+        await redis_client.client.set(
             "metrics:latest:node-2",
             json.dumps({
                 "node_id": "node-2",

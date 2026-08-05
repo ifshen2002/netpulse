@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends
-from redis_client import client as redis
+import redis_client
 from schemas import ChaosInjectIn, ChaosRecoverIn
 from services import chaos as chaos_svc
 from services.chaos import OVERLAY_TYPES
@@ -80,7 +80,7 @@ async def inject(body: ChaosInjectIn, user: CurrentUser = Depends(require_projec
                 m = normalize(raw)
                 m = chaos_svc.apply_overlay(m)
                 if m:
-                    await redis.set(
+                    await redis_client.client.set(
                         f"metrics:latest:{m['node_id']}",
                         json.dumps(m),
                     )
@@ -133,7 +133,7 @@ async def recover(body: ChaosRecoverIn | None = None, user: CurrentUser = Depend
         raw = _gen(nid)
         if raw:
             m = _norm(raw)
-            await redis.set(f"metrics:latest:{nid}", json.dumps(m))
+            await redis_client.client.set(f"metrics:latest:{nid}", json.dumps(m))
 
     if removed > 0:
         from services.alerting import resolve_for_node as _resolve

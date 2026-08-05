@@ -7,7 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import text
 
 from db import engine
-from redis_client import client as redis
+import redis_client
 from routers.websocket import manager
 from services.alerting import (
     check_heartbeats,
@@ -80,7 +80,7 @@ async def _collect_all_nodes() -> None:
             )
 
     for m in normalized:
-        await redis.set(
+        await redis_client.client.set(
             f"metrics:latest:{m['node_id']}",
             json.dumps(m),
         )
@@ -103,12 +103,12 @@ async def _collect_endpoints() -> None:
     live_ids = {r[0] for r in ep_rows}
 
     for prefix in ("metrics:latest:endpoint:", "packet_evidence:latest:"):
-        keys = await redis.keys(f"{prefix}*")
+        keys = await redis_client.client.keys(f"{prefix}*")
         for key in keys:
             key_str = key.decode() if isinstance(key, bytes) else key
             cached_id = key_str.replace(prefix, "")
             if cached_id not in live_ids:
-                await redis.delete(key_str)
+                await redis_client.client.delete(key_str)
 
     if not ep_rows:
         return
@@ -193,14 +193,14 @@ async def _collect_endpoints() -> None:
                     "status": metric["status"],
                     "previous_status": old_status,
                     "timestamp": ts.isoformat(),
-                }))
+                }), project_id=ep_project_id)
             _endpoint_status[endpoint_id] = metric["status"]
 
-            await redis.set(
+            await redis_client.client.set(
                 f"metrics:latest:endpoint:{endpoint_id}",
-                json.dumps({**metric, "endpoint": target_host}),
+                json.dumps({**metric, "endpoint": target_host, "project_id": ep_project_id}),
             )
-            await redis.set(
+            await redis_client.client.set(
                 f"packet_evidence:latest:{endpoint_id}",
                 json.dumps({
                     "id": pe_id,
@@ -215,6 +215,7 @@ async def _collect_endpoints() -> None:
                     "rtt_ms": raw["latency_ms"],
                     "timestamp": ts.isoformat(),
                     "raw_output": raw.get("raw_output", ""),
+                    "project_id": ep_project_id,
                 }),
             )
 
@@ -242,9 +243,9 @@ async def _push_endpoint_metrics() -> None:
     if manager.count == 0:
         return
 
-    keys = await redis.keys("metrics:latest:endpoint:*")
+    keys = await redis_client.client.keys("metrics:latest:endpoint:*")
     for key in keys:
-        raw = await redis.get(key)
+        raw = await redis_client.client.get(key)
         if raw is None:
             continue
         m = json.loads(raw)
@@ -257,11 +258,11 @@ async def _push_endpoint_metrics() -> None:
             "availability_pct": m["availability_pct"],
             "status": m["status"],
             "timestamp": m["timestamp"],
-        }))
+        }), project_id=m.get("project_id"))
 
-    pkeys = await redis.keys("packet_evidence:latest:*")
+    pkeys = await redis_client.client.keys("packet_evidence:latest:*")
     for key in pkeys:
-        raw = await redis.get(key)
+        raw = await redis_client.client.get(key)
         if raw is None:
             continue
         pe = json.loads(raw)
@@ -279,7 +280,7 @@ async def _push_endpoint_metrics() -> None:
             "rtt_ms": pe["rtt_ms"],
             "timestamp": pe["timestamp"],
             "raw_output": pe.get("raw_output", ""),
-        }))
+        }), project_id=pe.get("project_id"))
 
 
 async def _push_metrics() -> None:
@@ -287,7 +288,7 @@ async def _push_metrics() -> None:
         return
 
     for node_id in ("node-1", "node-2", "node-3"):
-        raw = await redis.get(f"metrics:latest:{node_id}")
+        raw = await redis_client.client.get(f"metrics:latest:{node_id}")
         if raw is None:
             continue
         m = json.loads(raw)

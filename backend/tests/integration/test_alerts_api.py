@@ -6,7 +6,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from main import app
-from redis_client import client as redis
+import redis_client
 from services.alerting import (
     _clean_streaks,
     _cooldowns,
@@ -46,13 +46,14 @@ def _metrics_json(cpu=35.0, latency=10.0):
 
 
 @pytest.mark.asyncio
-async def test_alerts_api_returns_list(client):
+async def test_alerts_api_returns_list(client, editor_headers_no_project):
+    """V1 synthetic-node alerts have NULL project_id; query without X-Project-ID."""
     _reset()
     _heartbeats["node-2"] = datetime.now(timezone.utc)
-    await redis.set("metrics:latest:node-2", _metrics_json(cpu=88.0))
+    await redis_client.client.set("metrics:latest:node-2", _metrics_json(cpu=88.0))
     await evaluate_node("node-2")
 
-    response = await client.get("/api/alerts?limit=5")
+    response = await client.get("/api/alerts?limit=5", headers=editor_headers_no_project)
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -61,13 +62,13 @@ async def test_alerts_api_returns_list(client):
 
 
 @pytest.mark.asyncio
-async def test_alerts_api_filter_by_node(client):
+async def test_alerts_api_filter_by_node(client, editor_headers_no_project):
     _reset()
     _heartbeats["node-2"] = datetime.now(timezone.utc)
-    await redis.set("metrics:latest:node-2", _metrics_json(cpu=82.0))
+    await redis_client.client.set("metrics:latest:node-2", _metrics_json(cpu=82.0))
     await evaluate_node("node-2")
 
-    response = await client.get("/api/alerts?node_id=node-2")
+    response = await client.get("/api/alerts?node_id=node-2", headers=editor_headers_no_project)
     assert response.status_code == 200
     data = response.json()
     for alert in data["data"]:
@@ -75,8 +76,8 @@ async def test_alerts_api_filter_by_node(client):
 
 
 @pytest.mark.asyncio
-async def test_incidents_api_returns_list(client):
-    response = await client.get("/api/incidents?limit=5")
+async def test_incidents_api_returns_list(client, editor_headers_no_project):
+    response = await client.get("/api/incidents?limit=5", headers=editor_headers_no_project)
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -84,15 +85,16 @@ async def test_incidents_api_returns_list(client):
 
 
 @pytest.mark.asyncio
-async def test_incident_lifecycle_via_api(client):
+async def test_incident_lifecycle_via_api(client, editor_headers_no_project):
+    h = editor_headers_no_project
     _reset()
     _heartbeats["node-2"] = datetime.now(timezone.utc)
 
     # Trigger alert — creates incident
-    await redis.set("metrics:latest:node-2", _metrics_json(cpu=95.0))
+    await redis_client.client.set("metrics:latest:node-2", _metrics_json(cpu=95.0))
     await evaluate_node("node-2")
 
-    resp = await client.get("/api/incidents?status=open&limit=5")
+    resp = await client.get("/api/incidents?status=open&limit=5", headers=h)
     data = resp.json()
     open_incidents = data["data"]
     assert len(open_incidents) >= 1
@@ -101,10 +103,10 @@ async def test_incident_lifecycle_via_api(client):
 
     # Simulate 3 clean evaluations to close incident
     for _ in range(3):
-        await redis.set("metrics:latest:node-2", _metrics_json())
+        await redis_client.client.set("metrics:latest:node-2", _metrics_json())
         await evaluate_node("node-2")
 
-    resp = await client.get(f"/api/incidents/{incident_id}")
+    resp = await client.get(f"/api/incidents/{incident_id}", headers=h)
     detail = resp.json()
     assert detail["success"] is True
     assert detail["data"]["status"] == "closed"
